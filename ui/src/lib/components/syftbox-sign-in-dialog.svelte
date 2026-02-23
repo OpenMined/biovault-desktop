@@ -106,10 +106,8 @@
 				error = 'SyftBox is busy (lock error). Try again in a moment or check if SyftBox is already running.'
 			}
 		} finally {
-			// Don't reset loading if we're moving to success or otp (they handle their own loading)
-			if (error || (syftboxAuthStore.isAuthEnabled && step === 'email')) {
-				loading = false
-			}
+			// Always clear request loading so OTP input is enabled after switching steps.
+			loading = false
 		}
 	}
 

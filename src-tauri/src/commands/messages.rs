@@ -1,6 +1,6 @@
 use crate::types::{
-    BatchedMessageRefreshResult, MessageFilterScope, MessageSendRequest, MessageSyncResult,
-    MessageThreadSummary,
+    BatchedMessageRefreshResult, CollaborationSpace, ContactTimelineEvent, MessageFilterScope,
+    MessageSendRequest, MessageSyncResult, MessageThreadSummary,
 };
 use biovault::cli::commands::messages::{get_message_db_path, init_message_system};
 use biovault::flow_spec::FlowFile;
@@ -57,6 +57,127 @@ fn add_group_chat_participants(
             }
         }
     }
+}
+
+fn message_involves_contact(message: &VaultMessage, contact: &str) -> bool {
+    if message.from.eq_ignore_ascii_case(contact) || message.to.eq_ignore_ascii_case(contact) {
+        return true;
+    }
+
+    let Some(meta) = &message.metadata else {
+        return false;
+    };
+    let Some(group_chat) = meta.get("group_chat") else {
+        return false;
+    };
+    let Some(group_participants) = group_chat.get("participants").and_then(|p| p.as_array()) else {
+        return false;
+    };
+
+    group_participants.iter().any(|p| {
+        p.as_str()
+            .map(|email| email.eq_ignore_ascii_case(contact))
+            .unwrap_or(false)
+    })
+}
+
+fn classify_timeline_kind(message: &VaultMessage) -> String {
+    let Some(meta) = &message.metadata else {
+        return "message".to_string();
+    };
+    if meta.get("session_invite").is_some() {
+        return "session_invite".to_string();
+    }
+    if meta.get("session_invite_response").is_some() {
+        return "session_invite_response".to_string();
+    }
+    if meta.get("session_chat").is_some() {
+        return "session_chat".to_string();
+    }
+    if meta.get("flow_request").is_some() {
+        return "flow_request".to_string();
+    }
+    if meta.get("flow_results").is_some() {
+        return "flow_results".to_string();
+    }
+    "message".to_string()
+}
+
+fn extract_session_context(message: &VaultMessage) -> (Option<String>, Option<String>) {
+    let Some(meta) = &message.metadata else {
+        return (None, None);
+    };
+
+    if let Some(session_chat) = meta.get("session_chat") {
+        let id = session_chat
+            .get("session_id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let name = session_chat
+            .get("session_name")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        return (id, name);
+    }
+    if let Some(invite) = meta.get("session_invite") {
+        let id = invite
+            .get("session_id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let name = invite
+            .get("session_name")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        return (id, name);
+    }
+    if let Some(response) = meta.get("session_invite_response") {
+        let id = response
+            .get("session_id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let name = response
+            .get("session_name")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        return (id, name);
+    }
+
+    (None, None)
+}
+
+fn extract_group_chat_participants(message: &VaultMessage) -> Vec<String> {
+    let Some(meta) = &message.metadata else {
+        return Vec::new();
+    };
+    let Some(group_chat) = meta.get("group_chat") else {
+        return Vec::new();
+    };
+    let Some(group_participants) = group_chat.get("participants").and_then(|p| p.as_array()) else {
+        return Vec::new();
+    };
+
+    group_participants
+        .iter()
+        .filter_map(|p| p.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn extract_group_chat_name(message: &VaultMessage) -> Option<String> {
+    let Some(meta) = &message.metadata else {
+        return None;
+    };
+    let Some(group_chat) = meta.get("group_chat") else {
+        return None;
+    };
+    group_chat
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 fn syftbox_storage(config: &biovault::config::Config) -> Result<SyftBoxStorage, String> {
@@ -667,6 +788,174 @@ pub fn get_thread_messages(thread_id: String) -> Result<Vec<VaultMessage>, Strin
     }
 
     Ok(messages)
+}
+
+#[tauri::command]
+pub fn list_spaces(limit: Option<usize>) -> Result<Vec<CollaborationSpace>, String> {
+    let config = load_config()?;
+    let db_path = get_message_db_path(&config)
+        .map_err(|e| format!("Failed to locate message database: {}", e))?;
+    let db =
+        MessageDb::new(&db_path).map_err(|e| format!("Failed to open message database: {}", e))?;
+
+    let mut messages = db
+        .list_messages(None)
+        .map_err(|e| format!("Failed to list messages: {}", e))?;
+
+    let mut spaces_map: HashMap<String, Vec<VaultMessage>> = HashMap::new();
+    for msg in messages.drain(..) {
+        let participants = extract_group_chat_participants(&msg);
+        if participants.len() < 2 {
+            continue;
+        }
+        let key = msg.thread_id.clone().unwrap_or_else(|| msg.id.clone());
+        spaces_map.entry(key).or_default().push(msg);
+    }
+
+    let mut spaces: Vec<CollaborationSpace> = spaces_map
+        .into_iter()
+        .filter_map(|(thread_id, mut msgs)| {
+            if msgs.is_empty() {
+                return None;
+            }
+            msgs.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+            let last_msg = msgs.last().cloned()?;
+
+            let mut participants: HashSet<String> = HashSet::new();
+            let mut explicit_group_name: Option<String> = None;
+            for msg in &msgs {
+                for participant in extract_group_chat_participants(msg) {
+                    participants.insert(participant);
+                }
+                if explicit_group_name.is_none() {
+                    explicit_group_name = extract_group_chat_name(msg);
+                }
+            }
+
+            let mut participants_vec: Vec<String> = participants.into_iter().collect();
+            participants_vec.sort();
+
+            let default_name = {
+                let others: Vec<String> = participants_vec
+                    .iter()
+                    .filter(|p| !p.eq_ignore_ascii_case(&config.email))
+                    .cloned()
+                    .collect();
+                if others.is_empty() {
+                    "Group Space".to_string()
+                } else if others.len() <= 2 {
+                    others.join(", ")
+                } else {
+                    format!("{}, +{} more", others[0], others.len() - 1)
+                }
+            };
+
+            let preview = last_msg
+                .body
+                .split_whitespace()
+                .take(40)
+                .collect::<Vec<_>>()
+                .join(" ");
+            let preview = if preview.len() > 200 {
+                format!("{}…", &preview[..200])
+            } else {
+                preview
+            };
+
+            let unread_count = msgs
+                .iter()
+                .filter(|m| {
+                    m.status == MessageStatus::Received
+                        && !m.from.eq_ignore_ascii_case(&config.email)
+                })
+                .count();
+
+            Some(CollaborationSpace {
+                space_id: thread_id.clone(),
+                thread_id,
+                name: explicit_group_name.unwrap_or(default_name),
+                member_count: participants_vec.len(),
+                participants: participants_vec,
+                last_activity_at: Some(last_msg.created_at.to_rfc3339()),
+                last_message_preview: preview,
+                unread_count,
+            })
+        })
+        .collect();
+
+    spaces.sort_by(|a, b| b.last_activity_at.cmp(&a.last_activity_at));
+    if let Some(limit) = limit {
+        spaces.truncate(limit);
+    }
+
+    Ok(spaces)
+}
+
+#[tauri::command]
+pub fn get_contact_timeline(
+    contact: String,
+    limit: Option<usize>,
+) -> Result<Vec<ContactTimelineEvent>, String> {
+    let normalized_contact = contact.trim().to_lowercase();
+    if normalized_contact.is_empty() {
+        return Err("Contact is required".to_string());
+    }
+
+    let config = load_config()?;
+    let db_path = get_message_db_path(&config)
+        .map_err(|e| format!("Failed to locate message database: {}", e))?;
+    let db =
+        MessageDb::new(&db_path).map_err(|e| format!("Failed to open message database: {}", e))?;
+
+    let mut messages = db
+        .list_messages(None)
+        .map_err(|e| format!("Failed to load messages: {}", e))?;
+
+    messages.retain(|m| message_involves_contact(m, &normalized_contact));
+    messages.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+
+    if let Some(limit) = limit {
+        if messages.len() > limit {
+            let drop_count = messages.len() - limit;
+            messages.drain(0..drop_count);
+        }
+    }
+
+    let timeline = messages
+        .into_iter()
+        .map(|m| {
+            let (session_id, session_name) = extract_session_context(&m);
+            let kind = classify_timeline_kind(&m);
+            let direction = if m.from.eq_ignore_ascii_case(&config.email) {
+                "outgoing"
+            } else {
+                "incoming"
+            };
+            let summary = if kind == "message" || kind == "session_chat" {
+                m.body.clone()
+            } else {
+                m.subject.clone().unwrap_or_else(|| m.body.clone())
+            };
+
+            ContactTimelineEvent {
+                event_id: format!("evt-{}", m.id),
+                message_id: m.id.clone(),
+                thread_id: m.thread_id.clone().unwrap_or_else(|| m.id.clone()),
+                created_at: m.created_at.to_rfc3339(),
+                kind,
+                direction: direction.to_string(),
+                from: m.from.clone(),
+                to: m.to.clone(),
+                summary,
+                body: m.body.clone(),
+                subject: m.subject.clone(),
+                session_id,
+                session_name,
+            }
+        })
+        .collect();
+
+    Ok(timeline)
 }
 
 /// Generate a deterministic thread ID for group chats based on sorted participants

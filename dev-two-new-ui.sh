@@ -72,7 +72,9 @@ fi
 
 stop_all() {
   log_header "Stopping everything"
-  pkill -f "tauri dev.*new-ui" 2>/dev/null || true
+  pkill -f "bunx tauri dev" 2>/dev/null || true
+  pkill -f "npm run tauri -- dev" 2>/dev/null || true
+  pkill -f "tauri dev --config" 2>/dev/null || true
   pkill -f "vite.*1420" 2>/dev/null || true
   
   # Stop devstack
@@ -207,7 +209,7 @@ launch_instance() {
 }
 
 # Cleanup on exit
-trap "kill $VITE_PID 2>/dev/null || true; pkill -f 'tauri dev.*new-ui' 2>/dev/null || true; exit" INT TERM EXIT
+trap "kill $VITE_PID 2>/dev/null || true; pkill -f 'bunx tauri dev' 2>/dev/null || true; pkill -f 'npm run tauri -- dev' 2>/dev/null || true; pkill -f 'tauri dev --config' 2>/dev/null || true; exit" INT TERM EXIT
 
 # Launch clients
 launch_instance "${CLIENTS[1]}" 2 "bg"

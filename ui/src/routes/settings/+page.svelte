@@ -46,6 +46,13 @@
 		mnemonic?: string
 	}
 
+	interface RepublishResult {
+		identity: string
+		fingerprint: string
+		export_path: string
+		vault_matches_export: boolean
+	}
+
 	let settings: Settings | null = $state(null)
 	let keyStatus: KeyStatus | null = $state(null)
 	let loading = $state(true)
@@ -57,6 +64,7 @@
 	let restoreMnemonic = $state('')
 	let restoring = $state(false)
 	let regenerating = $state(false)
+	let republishing = $state(false)
 	let newRecoveryPhrase = $state<string | null>(null)
 	let showNewRecoveryDialog = $state(false)
 	let copied = $state(false)
@@ -145,6 +153,26 @@
 		if (newRecoveryPhrase) {
 			await navigator.clipboard.writeText(newRecoveryPhrase)
 			toast.success('Recovery phrase copied to clipboard')
+		}
+	}
+
+	async function handleRepublishDid() {
+		if (!settings?.email) return
+		republishing = true
+		try {
+			const result = await invoke<RepublishResult>('key_republish', {
+				email: settings.email
+			})
+			toast.success('DID republished successfully', {
+				description: `Fingerprint: ${result.fingerprint}`
+			})
+			await loadKeyStatus()
+		} catch (e) {
+			toast.error('Failed to republish DID', {
+				description: e instanceof Error ? e.message : String(e)
+			})
+		} finally {
+			republishing = false
 		}
 	}
 </script>
@@ -252,6 +280,15 @@
 						<Button variant="outline" size="sm" onclick={() => (showRegenerateConfirm = true)}>
 							<RefreshCwIcon class="size-4" />
 							Regenerate Key
+						</Button>
+						<Button variant="outline" size="sm" onclick={handleRepublishDid} disabled={republishing}>
+							{#if republishing}
+								<Loader2Icon class="size-4 animate-spin" />
+								Republishing...
+							{:else}
+								<RefreshCwIcon class="size-4" />
+								Republish DID
+							{/if}
 						</Button>
 					</div>
 				{:else}

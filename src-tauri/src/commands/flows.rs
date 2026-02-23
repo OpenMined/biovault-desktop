@@ -740,6 +740,23 @@ pub struct ModuleInfo {
     pub id: i64,
     pub name: String,
     pub path: String,
+    #[serde(default)]
+    pub inputs: Vec<ModulePortInfo>,
+    #[serde(default)]
+    pub outputs: Vec<ModulePortInfo>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ModulePortInfo {
+    pub name: String,
+    #[serde(default)]
+    pub raw_type: String,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub required: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1158,6 +1175,67 @@ fn module_yaml_exists(module_root: &Path) -> bool {
             .is_some_and(|name| matches!(name, "module.yaml" | "module.yml"));
     }
     module_root.join("module.yaml").exists() || module_root.join("module.yml").exists()
+}
+
+fn resolve_module_yaml_path(module_root: &Path) -> Option<PathBuf> {
+    if module_root.is_file() {
+        let file_name = module_root.file_name().and_then(|n| n.to_str())?;
+        if matches!(file_name, "module.yaml" | "module.yml") {
+            return Some(module_root.to_path_buf());
+        }
+        return None;
+    }
+    let yaml = module_root.join("module.yaml");
+    if yaml.exists() {
+        return Some(yaml);
+    }
+    let yml = module_root.join("module.yml");
+    if yml.exists() {
+        return Some(yml);
+    }
+    None
+}
+
+fn load_module_ports(module_path: &str) -> (Vec<ModulePortInfo>, Vec<ModulePortInfo>) {
+    let path = PathBuf::from(module_path);
+    let Some(yaml_path) = resolve_module_yaml_path(&path) else {
+        return (Vec::new(), Vec::new());
+    };
+
+    let Ok(content) = fs::read_to_string(&yaml_path) else {
+        return (Vec::new(), Vec::new());
+    };
+    let Ok(module_file) = ModuleFile::parse_yaml(&content) else {
+        return (Vec::new(), Vec::new());
+    };
+    let Ok(spec) = module_file.to_module_spec() else {
+        return (Vec::new(), Vec::new());
+    };
+
+    let inputs = spec
+        .inputs
+        .into_iter()
+        .map(|item| ModulePortInfo {
+            name: item.name,
+            raw_type: item.raw_type,
+            path: item.path,
+            description: item.description,
+            // Module inputs should be considered required unless the module itself handles defaults.
+            required: true,
+        })
+        .collect::<Vec<_>>();
+    let outputs = spec
+        .outputs
+        .into_iter()
+        .map(|item| ModulePortInfo {
+            name: item.name,
+            raw_type: item.raw_type,
+            path: item.path,
+            description: item.description,
+            required: false,
+        })
+        .collect::<Vec<_>>();
+    (inputs, outputs)
 }
 
 fn missing_local_module_paths(source_root: &Path, flow: &FlowFile) -> Vec<String> {
@@ -1786,10 +1864,15 @@ pub async fn load_flow_editor(
 
     let modules = modules_list
         .iter()
-        .map(|p| ModuleInfo {
-            id: p.id,
-            name: p.name.clone(),
-            path: p.module_path.clone(),
+        .map(|p| {
+            let (inputs, outputs) = load_module_ports(&p.module_path);
+            ModuleInfo {
+                id: p.id,
+                name: p.name.clone(),
+                path: p.module_path.clone(),
+                inputs,
+                outputs,
+            }
         })
         .collect::<Vec<_>>();
 

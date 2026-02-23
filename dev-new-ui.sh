@@ -4,7 +4,7 @@ set -euo pipefail
 # Launch a single BioVault Desktop instance with the NEW UI (src)
 #
 # Usage:
-#   ./dev-new-ui.sh [--client EMAIL] [--reset] [--path DIR]
+#   ./dev-new-ui.sh [--client EMAIL] [--reset] [--path DIR] [--live]
 #
 # Examples:
 #   ./dev-new-ui.sh                          # Default client
@@ -15,11 +15,13 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="${WORKSPACE_ROOT:-$ROOT_DIR}"
 BIOVAULT_DIR="${BIOVAULT_DIR:-$WORKSPACE_ROOT/biovault}"
 SYFTBOX_URL="${SYFTBOX_URL:-https://dev.syftbox.net}"
-SYFTBOX_AUTH_ENABLED="${SYFTBOX_AUTH_ENABLED:-0}"
+SYFTBOX_AUTH_ENABLED="${SYFTBOX_AUTH_ENABLED:-}"
 SANDBOX_DIR="${SANDBOX_DIR:-$ROOT_DIR/sandbox}"
 LOG_DIR="$ROOT_DIR/logs"
 CLIENT_EMAIL=""
 RESET_FLAG=0
+LIVE_MODE=0
+PATH_SET=0
 VITE_PID=""
 
 mkdir -p "$LOG_DIR"
@@ -120,11 +122,22 @@ launch_tauri_instance() {
     export SYFTBOX_AUTH_ENABLED="$SYFTBOX_AUTH_ENABLED"
     export SYFTBOX_CONFIG_PATH="$home/syftbox/config.json"
     export SYFTBOX_DATA_DIR="$home"
+    export SBC_VAULT="$SYFTBOX_DATA_DIR/.sbc"
     export SYC_VAULT="$SYFTBOX_DATA_DIR/.syc"
-    export BIOVAULT_DEV_MODE=1
-    export BIOVAULT_DEV_SYFTBOX=1
-    export BIOVAULT_DEBUG_BANNER=1
-    export BIOVAULT_DISABLE_PROFILES=1
+    if (( LIVE_MODE )); then
+      unset BIOVAULT_DEV_MODE
+      unset BIOVAULT_DEV_SYFTBOX
+      unset BIOVAULT_DEBUG_BANNER
+      unset BIOVAULT_DISABLE_PROFILES
+      unset DEV_WS_BRIDGE
+      unset DEV_WS_BRIDGE_PORT
+      unset DEV_WS_BRIDGE_HTTP_PORT
+    else
+      export BIOVAULT_DEV_MODE=1
+      export BIOVAULT_DEV_SYFTBOX=1
+      export BIOVAULT_DEBUG_BANNER=1
+      export BIOVAULT_DISABLE_PROFILES=1
+    fi
     
     bunx tauri dev --config '{"build": {"devUrl": "http://localhost:1420", "frontendDist": "../ui/build"}}' 2>&1 | while read -r line; do
       echo "[TAURI] $line"
@@ -139,7 +152,9 @@ cleanup() {
   [[ -n "$VITE_PID" ]] && kill "$VITE_PID" 2>/dev/null || true
   
   # Kill any orphan processes
-  pkill -f "tauri dev.*new-ui" 2>/dev/null || true
+  pkill -f "bunx tauri dev" 2>/dev/null || true
+  pkill -f "npm run tauri -- dev" 2>/dev/null || true
+  pkill -f "tauri dev --config" 2>/dev/null || true
   pkill -f "vite.*1420" 2>/dev/null || true
   
   echo "[new-ui] Done"
@@ -160,7 +175,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     --path)
       SANDBOX_DIR="$2"
+      PATH_SET=1
       shift 2
+      ;;
+    --live)
+      LIVE_MODE=1
+      shift
       ;;
     *)
       echo "Unknown option: $1" >&2
@@ -169,9 +189,24 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Set default client if not specified
-if [[ -z "$CLIENT_EMAIL" ]]; then
-  CLIENT_EMAIL="$DEFAULT_CLIENT"
+# Live mode defaults
+if (( LIVE_MODE )); then
+  if [[ -z "$CLIENT_EMAIL" ]]; then
+    CLIENT_EMAIL="$DEFAULT_CLIENT"
+  fi
+  if (( ! PATH_SET )) && [[ "$SANDBOX_DIR" == "$ROOT_DIR/sandbox" ]]; then
+    SANDBOX_DIR="$ROOT_DIR/sandbox-live"
+  fi
+  if [[ -z "$SYFTBOX_AUTH_ENABLED" ]]; then
+    SYFTBOX_AUTH_ENABLED=1
+  fi
+else
+  if [[ -z "$CLIENT_EMAIL" ]]; then
+    CLIENT_EMAIL="$DEFAULT_CLIENT"
+  fi
+  if [[ -z "$SYFTBOX_AUTH_ENABLED" ]]; then
+    SYFTBOX_AUTH_ENABLED=0
+  fi
 fi
 
 echo "=============================================="
@@ -179,6 +214,8 @@ echo " BioVault Desktop - New UI (Single Client)"
 echo "=============================================="
 echo " Client: $CLIENT_EMAIL"
 echo " SyftBox: $SYFTBOX_URL"
+echo " Auth: $SYFTBOX_AUTH_ENABLED"
+echo " Live mode: $LIVE_MODE"
 echo " Sandbox: $SANDBOX_DIR"
 echo "=============================================="
 

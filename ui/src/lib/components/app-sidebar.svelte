@@ -21,6 +21,7 @@
 	import WifiIcon from '@lucide/svelte/icons/wifi'
 	import WifiOffIcon from '@lucide/svelte/icons/wifi-off'
 	import Loader2Icon from '@lucide/svelte/icons/loader-2'
+	import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert'
 	import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js'
 	import * as Tooltip from '$lib/components/ui/tooltip/index.js'
 	import { Switch } from '$lib/components/ui/switch/index.js'
@@ -37,7 +38,7 @@
 		{ title: 'Explore', url: '/explore', icon: CompassIcon, testId: 'nav-explore' },
 		{ title: 'Flows', url: '/flows', icon: WorkflowIcon, testId: 'nav-flows' },
 		{ title: 'Datasets', url: '/datasets', icon: DatabaseIcon, testId: 'nav-datasets' },
-		{ title: 'Collaborate', url: '/collaborate', icon: UsersIcon, testId: 'nav-collaborate' },
+		{ title: 'Spaces', url: '/collaborate', icon: UsersIcon, testId: 'nav-collaborate' },
 		{ title: 'Results', url: '/runs', icon: PlayCircleIcon, testId: 'nav-results' },
 	]
 
@@ -48,6 +49,8 @@
 	let disconnectDialogOpen = $state(false)
 	let disconnecting = $state(false)
 	let profileSwitcherOpen = $state(false)
+	let devstackHealthWarning = $state(false)
+	let devstackRefresh429Count = $state(0)
 
 	// Derive display name from email (part before @)
 	const userName = $derived(userEmail ? userEmail.split('@')[0] : 'Not signed in')
@@ -75,18 +78,43 @@
 		}
 	})
 
-	onMount(async () => {
-		try {
-			// Check SyftBox auth status and load profiles in parallel
-			await Promise.all([syftboxAuthStore.checkAuth(), profilesStore.load()])
+	onMount(() => {
+		let healthPoll: ReturnType<typeof setInterval> | null = null
 
-			// Get email from settings
-			const settings = await invoke<{ email: string }>('get_settings')
-			userEmail = settings.email || ''
-		} catch (e) {
-			console.error('Failed to load settings:', e)
-		} finally {
-			userLoading = false
+		const refreshDevstackHealth = async () => {
+			try {
+				const health = await invoke<{
+					active: boolean
+					has_refresh_429_warning: boolean
+					refresh_429_count: number
+				}>('get_devstack_sync_health')
+				devstackHealthWarning = Boolean(health?.active && health?.has_refresh_429_warning)
+				devstackRefresh429Count = Number(health?.refresh_429_count || 0)
+			} catch {
+				devstackHealthWarning = false
+				devstackRefresh429Count = 0
+			}
+		}
+
+		;(async () => {
+			try {
+				// Check SyftBox auth status and load profiles in parallel
+				await Promise.all([syftboxAuthStore.checkAuth(), profilesStore.load()])
+
+				// Get email from settings
+				const settings = await invoke<{ email: string }>('get_settings')
+				userEmail = settings.email || ''
+				await refreshDevstackHealth()
+				healthPoll = setInterval(refreshDevstackHealth, 15000)
+			} catch (e) {
+				console.error('Failed to load settings:', e)
+			} finally {
+				userLoading = false
+			}
+		})()
+
+		return () => {
+			if (healthPoll) clearInterval(healthPoll)
 		}
 	})
 
@@ -175,6 +203,12 @@
 									<span class="truncate text-xs"
 										>{userLoading ? '' : userEmail || 'Not configured'}</span
 									>
+									{#if devstackHealthWarning}
+										<span class="mt-0.5 inline-flex items-center gap-1 text-[11px] text-amber-700">
+											<TriangleAlertIcon class="size-3" />
+											Refresh 429 ({devstackRefresh429Count})
+										</span>
+									{/if}
 								</div>
 								<ChevronUpIcon class="group-data-[collapsible=icon]:hidden ml-auto size-4" />
 							</Sidebar.MenuButton>
@@ -194,6 +228,12 @@
 								<div class="grid flex-1 text-left text-sm leading-tight">
 									<span class="truncate font-semibold">{userName}</span>
 									<span class="truncate text-xs">{userEmail || 'Not configured'}</span>
+									{#if devstackHealthWarning}
+										<span class="mt-0.5 inline-flex items-center gap-1 text-[11px] text-amber-700">
+											<TriangleAlertIcon class="size-3" />
+											Refresh 429 ({devstackRefresh429Count})
+										</span>
+									{/if}
 								</div>
 							</div>
 						</DropdownMenu.Label>

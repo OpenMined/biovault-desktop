@@ -1,56 +1,30 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core'
+	import { goto } from '$app/navigation'
 	import { onMount, onDestroy } from 'svelte'
 	import { syftboxAuthStore } from '$lib/stores/syftbox-auth.svelte'
 	import PageHeader from '$lib/components/page-header.svelte'
 	import SyftboxSignInDialog from '$lib/components/syftbox-sign-in-dialog.svelte'
+	import ConversationPanel from '$lib/components/conversation-panel.svelte'
+	import { buildSpaceConversationAdapter, type ConversationAdapter } from '$lib/collab/conversation-adapters'
 	import * as Empty from '$lib/components/ui/empty/index.js'
+	import * as Dialog from '$lib/components/ui/dialog/index.js'
+	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
 	import * as Avatar from '$lib/components/ui/avatar/index.js'
 	import { Button } from '$lib/components/ui/button/index.js'
 	import { Input } from '$lib/components/ui/input/index.js'
-	import { Textarea } from '$lib/components/ui/textarea/index.js'
 	import { Badge } from '$lib/components/ui/badge/index.js'
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js'
-	import InboxIcon from '@lucide/svelte/icons/inbox'
-	import SendIcon from '@lucide/svelte/icons/send'
-	import PlusIcon from '@lucide/svelte/icons/plus'
-	import SearchIcon from '@lucide/svelte/icons/search'
-	import TrashIcon from '@lucide/svelte/icons/trash-2'
-	import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left'
-	import Loader2Icon from '@lucide/svelte/icons/loader-2'
 	import LogInIcon from '@lucide/svelte/icons/log-in'
-	import ExternalLinkIcon from '@lucide/svelte/icons/external-link'
+	import SearchIcon from '@lucide/svelte/icons/search'
 	import UsersIcon from '@lucide/svelte/icons/users'
-	import MessageSquareIcon from '@lucide/svelte/icons/message-square'
-	import UserPlusIcon from '@lucide/svelte/icons/user-plus'
-	import UserCheckIcon from '@lucide/svelte/icons/user-check'
-	import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw'
-	import FolderOpenIcon from '@lucide/svelte/icons/folder-open'
-	import PlayIcon from '@lucide/svelte/icons/play'
-	import SquareIcon from '@lucide/svelte/icons/square'
+	import Loader2Icon from '@lucide/svelte/icons/loader-2'
+	import PlusIcon from '@lucide/svelte/icons/plus'
 	import LockIcon from '@lucide/svelte/icons/lock'
-	import DatabaseIcon from '@lucide/svelte/icons/database'
-
-	async function openUrl(url: string) {
-		try {
-			await invoke('open_url', { url })
-		} catch {
-			window.open(url, '_blank')
-		}
-	}
-
-	// Types matching backend
-	interface MessageThreadSummary {
-		thread_id: string
-		subject: string
-		participants: string[]
-		unread_count: number
-		last_message_at: string | null
-		last_message_preview: string
-		has_project: boolean
-		session_id?: string
-		session_name?: string
-	}
+	import FolderOpenIcon from '@lucide/svelte/icons/folder-open'
+	import CheckIcon from '@lucide/svelte/icons/check'
+	import MessageSquareIcon from '@lucide/svelte/icons/message-square'
+	import { toast } from 'svelte-sonner'
 
 	interface VaultMessage {
 		id: string
@@ -67,8 +41,9 @@
 	interface Contact {
 		identity: string
 		fingerprint?: string
-		local_bundle_path?: string
-		has_changed?: boolean
+	}
+	interface SpaceCandidate extends Contact {
+		source: 'contact' | 'discovered'
 	}
 
 	interface NetworkScanResult {
@@ -76,16 +51,26 @@
 		discovered: Contact[]
 	}
 
+	interface CollaborationSpace {
+		space_id: string
+		thread_id: string
+		name: string
+		participants: string[]
+		member_count: number
+		last_activity_at?: string
+		last_message_preview: string
+		unread_count: number
+	}
+
 	interface Session {
 		session_id: string
 		name: string
-		description?: string
 		status: string
 		owner: string
 		peer?: string
 		created_at: string
 		session_path?: string
-		role?: string
+		description?: string
 	}
 
 	interface SessionInvitation {
@@ -96,104 +81,232 @@
 		created_at: string
 	}
 
-	// Main tab state
-	let activeMainTab = $state<'messages' | 'sessions' | 'contacts'>('messages')
+	let signInDialogOpen = $state(false)
+	let createSessionDialogOpen = $state(false)
+	let createSessionName = $state('')
+	let createSessionLoading = $state(false)
+	let createSessionError = $state('')
+	let createSpaceDialogOpen = $state(false)
+	let createSpaceName = $state('')
+	let createSpaceQuery = $state('')
+	let createSpaceLoading = $state(false)
+	let createSpaceError = $state('')
+	let createSpaceSelected = $state<string[]>([])
+	let createSpaceConfirmAdd = $state(false)
 
-	// Messages state
-	let threads = $state<MessageThreadSummary[]>([])
-	let selectedThread = $state<MessageThreadSummary | null>(null)
-	let messages = $state<VaultMessage[]>([])
-	let loadingMessages = $state(false)
-	let sending = $state(false)
-	let searchQuery = $state('')
-	let draftMessage = $state('')
-	let isComposing = $state(false)
-	let composeRecipient = $state('')
-	let composeSubject = $state('')
-	let composeBody = $state('')
-
-	// Contacts state
 	let contacts = $state<Contact[]>([])
 	let discovered = $state<Contact[]>([])
-	let loadingContacts = $state(false)
-	let contactSearchQuery = $state('')
-
-	// Sessions state
+	let spaces = $state<CollaborationSpace[]>([])
 	let sessions = $state<Session[]>([])
-	let sessionInvitations = $state<SessionInvitation[]>([])
-	let selectedSession = $state<Session | null>(null)
-	let loadingSessions = $state(false)
-	let sessionSearchQuery = $state('')
+	let invitations = $state<SessionInvitation[]>([])
 
-	// Global state
-	let loading = $state(true)
-	let error = $state<string | null>(null)
+	let selectedSpace = $state<CollaborationSpace | null>(null)
+	let spaceChatReloadSignal = $state(0)
+
+	let listSearch = $state('')
 	let currentUserEmail = $state('')
+	let loading = $state(true)
+	let loadingList = $state(false)
+	let loadingSessions = $state(false)
+	let eventActionLoading = $state<Record<string, boolean>>({})
+	let refreshTimer: ReturnType<typeof setInterval> | null = null
 
-	// Refresh interval
-	let refreshInterval: ReturnType<typeof setInterval> | null = null
 	const AUTO_REFRESH_MS = 10000
-
-	// SyftBox auth state
-	let signInDialogOpen = $state(false)
 	const isAuthenticated = $derived(syftboxAuthStore.isAuthenticated)
 	const isCheckingAuth = $derived(syftboxAuthStore.isChecking)
 
-	// Derived: filtered lists
-	const filteredThreads = $derived(
-		searchQuery.trim()
-			? threads.filter((thread) => {
-					const query = searchQuery.toLowerCase()
-					return (
-						thread.subject.toLowerCase().includes(query) ||
-						thread.participants.some((p) => p.toLowerCase().includes(query)) ||
-						thread.last_message_preview.toLowerCase().includes(query)
-					)
-				})
-			: threads
-	)
+	function normalizeIdentity(value: unknown): string | null {
+		if (typeof value !== 'string') return null
+		const trimmed = value.trim()
+		return trimmed.length > 0 ? trimmed : null
+	}
 
-	const filteredContacts = $derived(
-		contactSearchQuery.trim()
-			? contacts.filter((c) => c.identity.toLowerCase().includes(contactSearchQuery.toLowerCase()))
-			: contacts
-	)
+	function participantSignature(values: string[]): string {
+		return [...new Set(values.map((v) => v.toLowerCase()))].sort().join('|')
+	}
 
-	const filteredDiscovered = $derived(
-		contactSearchQuery.trim()
-			? discovered.filter((c) =>
-					c.identity.toLowerCase().includes(contactSearchQuery.toLowerCase())
-				)
-			: discovered
-	)
+	type SpaceMessageKind = 'message' | 'session_invite' | 'session_response' | 'flow_request' | 'flow_results'
 
-	const filteredSessions = $derived(
-		sessionSearchQuery.trim()
-			? sessions.filter((s) => {
-					const query = sessionSearchQuery.toLowerCase()
-					return (
-						s.name.toLowerCase().includes(query) ||
-						(s.peer?.toLowerCase().includes(query) ?? false) ||
-						s.status.toLowerCase().includes(query)
-					)
-				})
-			: sessions
-	)
+	function getMessageKind(msg: VaultMessage): SpaceMessageKind {
+		const meta = msg.metadata || {}
+		if (meta.flow_request) return 'flow_request'
+		if (meta.flow_results) return 'flow_results'
+		if (meta.session_invite) return 'session_invite'
+		if (meta.session_invite_response) return 'session_response'
+		return 'message'
+	}
 
-	// Unread counts for badges
-	const unreadMessageCount = $derived(threads.filter((t) => t.unread_count > 0).length)
-	const pendingInvitesCount = $derived(sessionInvitations.length)
+	function getSessionInviteId(msg: VaultMessage): string | null {
+		const meta = msg.metadata || {}
+		const invite = meta.session_invite as Record<string, unknown> | undefined
+		const id = invite?.session_id
+		return typeof id === 'string' && id.trim().length > 0 ? id : null
+	}
 
-	let initialDataLoaded = $state(false)
+	function getSessionResponseId(msg: VaultMessage): string | null {
+		const meta = msg.metadata || {}
+		const response = meta.session_invite_response as Record<string, unknown> | undefined
+		const id = response?.session_id
+		return typeof id === 'string' && id.trim().length > 0 ? id : null
+	}
 
-	// Load data when user signs in
-	$effect(() => {
-		if (isAuthenticated && !initialDataLoaded && !loading) {
-			initialDataLoaded = true
-			loadAllData(true)
-			startAutoRefresh()
+	function getSessionMessageId(msg: VaultMessage): string | null {
+		return getSessionResponseId(msg) || getSessionInviteId(msg)
+	}
+
+	function getFlowRequestMeta(msg: VaultMessage): Record<string, unknown> | null {
+		const meta = msg.metadata || {}
+		const fr = meta.flow_request
+		return fr && typeof fr === 'object' ? (fr as Record<string, unknown>) : null
+	}
+
+	function getFlowResultsMeta(msg: VaultMessage): Record<string, unknown> | null {
+		const meta = msg.metadata || {}
+		const fr = meta.flow_results
+		return fr && typeof fr === 'object' ? (fr as Record<string, unknown>) : null
+	}
+
+	function badgeForKind(kind: SpaceMessageKind): string {
+		switch (kind) {
+			case 'session_invite':
+				return 'Session Invite'
+			case 'session_response':
+				return 'Session Update'
+			case 'flow_request':
+				return 'Flow Request'
+			case 'flow_results':
+				return 'Flow Results'
+			default:
+				return 'Message'
 		}
+	}
+
+	function setEventLoading(messageId: string, loading: boolean) {
+		eventActionLoading = { ...eventActionLoading, [messageId]: loading }
+	}
+
+	const filteredSpaces = $derived(
+		listSearch.trim()
+			? spaces.filter((s) => {
+					const q = listSearch.toLowerCase()
+					return (
+						s.name.toLowerCase().includes(q) ||
+						s.participants.some((p) => p.toLowerCase().includes(q))
+					)
+				})
+			: spaces,
+	)
+
+	const contactIdentitySet = $derived.by(() => {
+		const set = new Set<string>()
+		for (const c of contacts) {
+			const id = normalizeIdentity(c.identity)
+			if (id) set.add(id.toLowerCase())
+		}
+		return set
 	})
+	const selectableDiscovered = $derived.by(() =>
+		discovered.filter((d) => {
+			const id = normalizeIdentity(d.identity)
+			return id ? !contactIdentitySet.has(id.toLowerCase()) : false
+		}),
+	)
+	const spaceCandidates = $derived.by<SpaceCandidate[]>(() => {
+		const q = createSpaceQuery.trim().toLowerCase()
+		const merged: SpaceCandidate[] = [
+			...contacts.map((c) => ({ ...c, source: 'contact' as const })),
+			...selectableDiscovered.map((c) => ({ ...c, source: 'discovered' as const })),
+		]
+		return merged
+			.filter((c) => !!normalizeIdentity(c.identity))
+			.filter((c) => {
+				const id = normalizeIdentity(c.identity)
+				return id ? id.toLowerCase() !== currentUserEmail.toLowerCase() : false
+			})
+			.filter((c) => {
+				const id = normalizeIdentity(c.identity)
+				return id ? (q ? id.toLowerCase().includes(q) : true) : false
+			})
+			.sort((a, b) => (a.identity || '').localeCompare(b.identity || ''))
+	})
+	const selectedDiscoveredCount = $derived.by(
+		() =>
+			createSpaceSelected.filter((id) => {
+				const safe = normalizeIdentity(id)
+				return safe ? !contactIdentitySet.has(safe.toLowerCase()) : false
+			}).length,
+	)
+	const selectedSpaceParticipantSet = $derived.by(() => {
+		const set = new Set<string>()
+		if (!selectedSpace) return set
+		for (const p of selectedSpace.participants) {
+			const safe = normalizeIdentity(p)
+			if (safe) set.add(safe.toLowerCase())
+		}
+		return set
+	})
+	const selectedSpaceSessions = $derived.by(() => {
+		if (!selectedSpace) return []
+		return sessions.filter((session) => {
+			const owner = normalizeIdentity(session.owner)
+			const peer = normalizeIdentity(session.peer)
+			return !!(
+				(owner && selectedSpaceParticipantSet.has(owner.toLowerCase())) ||
+				(peer && selectedSpaceParticipantSet.has(peer.toLowerCase()))
+			)
+		})
+	})
+	function dedupeSpaceMessages(messages: VaultMessage[]): VaultMessage[] {
+		return messages.filter((msg, idx, arr) => {
+			const kind = getMessageKind(msg)
+			if (kind !== 'session_invite' && kind !== 'session_response') return true
+			const sessionId = getSessionMessageId(msg)
+			if (!sessionId) return true
+			for (let i = idx + 1; i < arr.length; i++) {
+				const next = arr[i]
+				const nextKind = getMessageKind(next)
+				if (nextKind !== 'session_invite' && nextKind !== 'session_response') continue
+				if (getSessionMessageId(next) === sessionId) return false
+			}
+			return true
+		})
+	}
+	function initials(identity: string): string {
+		if (!identity) return '?'
+		return identity.split('@')[0].slice(0, 2).toUpperCase()
+	}
+
+	function formatTime(value: string | null | undefined): string {
+		if (!value) return ''
+		const date = new Date(value)
+		const now = new Date()
+		const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24))
+		if (diffDays === 0) return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+		if (diffDays === 1) return 'Yesterday'
+		if (diffDays < 7) return date.toLocaleDateString([], { weekday: 'short' })
+		return date.toLocaleDateString([], { month: 'short', day: 'numeric' })
+	}
+
+	function formatFullTime(value: string): string {
+		const date = new Date(value)
+		return date.toLocaleString([], {
+			month: 'short',
+			day: 'numeric',
+			hour: '2-digit',
+			minute: '2-digit',
+		})
+	}
+
+	function isOutgoingMessage(msg: VaultMessage): boolean {
+		return msg.from.toLowerCase() === currentUserEmail.toLowerCase()
+	}
+
+	function navigateToSessionWorkspace(
+		sessionId: string,
+		tab: 'overview' | 'datasets' | 'jupyter' | 'chat' = 'overview',
+	) {
+		goto(`/collaborate/sessions/${encodeURIComponent(sessionId)}?tab=${tab}`)
+	}
 
 	async function getCurrentUserEmail(): Promise<string> {
 		try {
@@ -204,303 +317,331 @@
 		}
 	}
 
-	async function loadAllData(refresh = false) {
-		await Promise.all([loadThreads(refresh), loadContacts(), loadSessions()])
-	}
-
-	// Messages functions
-	async function loadThreads(refresh = false) {
-		try {
-			if (refresh) {
-				const result = await invoke<{
-					threads: MessageThreadSummary[]
-					new_messages: number
-				}>('refresh_messages_batched', { scope: 'all' })
-				threads = result?.threads || []
-			} else {
-				threads = await invoke<MessageThreadSummary[]>('list_message_threads', {
-					scope: 'all'
-				})
-			}
-		} catch (e) {
-			console.error('Failed to load threads:', e)
-			error = e instanceof Error ? e.message : String(e)
-		}
-	}
-
-	async function loadMessages(threadId: string) {
-		loadingMessages = true
-		try {
-			messages = await invoke<VaultMessage[]>('get_thread_messages', { threadId })
-			setTimeout(() => {
-				const container = document.getElementById('message-container')
-				if (container) container.scrollTop = container.scrollHeight
-			}, 50)
-		} catch (e) {
-			console.error('Failed to load messages:', e)
-			error = e instanceof Error ? e.message : String(e)
-		} finally {
-			loadingMessages = false
-		}
-	}
-
-	function selectThread(thread: MessageThreadSummary) {
-		isComposing = false
-		selectedThread = thread
-		loadMessages(thread.thread_id)
-	}
-
-	function startCompose() {
-		isComposing = true
-		selectedThread = null
-		messages = []
-		composeRecipient = ''
-		composeSubject = ''
-		composeBody = ''
-	}
-
-	function cancelCompose() {
-		isComposing = false
-		composeRecipient = ''
-		composeSubject = ''
-		composeBody = ''
-	}
-
-	async function sendMessage() {
-		if (isComposing) {
-			if (!composeRecipient.trim() || !composeBody.trim()) return
-
-			sending = true
-			try {
-				const sent = await invoke<VaultMessage>('send_message', {
-					request: {
-						to: composeRecipient.trim(),
-						subject: composeSubject.trim() || '(No Subject)',
-						body: composeBody.trim()
-					}
-				})
-
-				await loadThreads(false)
-				const newThread = threads.find(
-					(t) => t.thread_id === sent.thread_id || t.thread_id === sent.id
-				)
-				if (newThread) {
-					selectThread(newThread)
-				}
-				isComposing = false
-				composeRecipient = ''
-				composeSubject = ''
-				composeBody = ''
-			} catch (e) {
-				console.error('Failed to send message:', e)
-				error = e instanceof Error ? e.message : String(e)
-			} finally {
-				sending = false
-			}
-		} else if (selectedThread && draftMessage.trim()) {
-			sending = true
-			try {
-				const lastMessage = messages[messages.length - 1]
-				await invoke('send_message', {
-					request: {
-						to: getOtherParticipant(selectedThread.participants),
-						subject: selectedThread.subject,
-						body: draftMessage.trim(),
-						reply_to: lastMessage?.id
-					}
-				})
-
-				draftMessage = ''
-				await loadMessages(selectedThread.thread_id)
-				await loadThreads(false)
-			} catch (e) {
-				console.error('Failed to send reply:', e)
-				error = e instanceof Error ? e.message : String(e)
-			} finally {
-				sending = false
-			}
-		}
-	}
-
-	// Contacts functions
 	async function loadContacts() {
-		loadingContacts = true
-		try {
-			const result = await invoke<NetworkScanResult>('network_scan_datasites')
-			contacts = result?.contacts || []
-			discovered = result?.discovered || []
-		} catch (e) {
-			console.error('Failed to load contacts:', e)
-		} finally {
-			loadingContacts = false
-		}
+		const result = await invoke<NetworkScanResult>('network_scan_datasites')
+		contacts = result?.contacts || []
+		discovered = result?.discovered || []
 	}
 
-	async function addContact(identity: string) {
-		try {
-			await invoke('network_import_contact', { identity })
-			await loadContacts()
-		} catch (e) {
-			console.error('Failed to add contact:', e)
-		}
+	async function loadSpaces() {
+		spaces = await invoke<CollaborationSpace[]>('list_spaces', { limit: 300 })
 	}
 
-	async function removeContact(identity: string) {
-		if (!confirm(`Remove ${identity} from your contacts?`)) return
-		try {
-			await invoke('network_remove_contact', { identity })
-			await loadContacts()
-		} catch (e) {
-			console.error('Failed to remove contact:', e)
-		}
-	}
-
-	function messageContact(identity: string) {
-		activeMainTab = 'messages'
-		isComposing = true
-		selectedThread = null
-		messages = []
-		composeRecipient = identity
-		composeSubject = ''
-		composeBody = ''
-	}
-
-	// Sessions functions
 	async function loadSessions() {
 		loadingSessions = true
 		try {
-			const [sessionsResult, invitesResult] = await Promise.all([
+			const [sessionList, inviteList] = await Promise.all([
 				invoke<Session[]>('get_sessions'),
-				invoke<SessionInvitation[]>('get_session_invitations')
+				invoke<SessionInvitation[]>('get_session_invitations'),
 			])
-			sessions = sessionsResult || []
-			// Filter out invites for sessions we already have
-			const existingIds = new Set(sessions.map((s) => s.session_id))
-			sessionInvitations = (invitesResult || []).filter((i) => !existingIds.has(i.session_id))
-		} catch (e) {
-			console.error('Failed to load sessions:', e)
+			sessions = sessionList || []
+			const existing = new Set(sessions.map((s) => s.session_id))
+			invitations = (inviteList || []).filter((i) => !existing.has(i.session_id))
 		} finally {
 			loadingSessions = false
 		}
 	}
 
-	function selectSession(session: Session) {
-		selectedSession = session
-	}
-
-	async function acceptInvitation(sessionId: string) {
+	async function loadSidebar(refresh = false) {
+		loadingList = true
 		try {
-			const session = await invoke<Session>('accept_session_invitation', { sessionId })
-			await loadSessions()
-			selectedSession = session
-		} catch (e) {
-			console.error('Failed to accept invitation:', e)
+			await Promise.all([loadContacts(), loadSpaces(), loadSessions()])
+			if (!selectedSpace && spaces.length > 0) {
+				selectSpace(spaces[0])
+			}
+		} finally {
+			loadingList = false
 		}
 	}
 
-	async function rejectInvitation(sessionId: string) {
-		if (!confirm('Decline this session invite?')) return
-		try {
-			await invoke('reject_session_invitation', { sessionId, reason: null })
-			sessionInvitations = sessionInvitations.filter((i) => i.session_id !== sessionId)
-			await loadSessions()
-		} catch (e) {
-			console.error('Failed to reject invitation:', e)
+	function selectSpace(space: CollaborationSpace) {
+		selectedSpace = space
+		spaceChatReloadSignal += 1
+	}
+
+	async function onAfterSpaceSend(spaceId: string) {
+		await loadSidebar(false)
+		const refreshed = spaces.find((s) => s.space_id === spaceId)
+		if (refreshed) {
+			selectedSpace = refreshed
+			spaceChatReloadSignal += 1
 		}
 	}
 
-	async function openSessionFolder(sessionId: string) {
-		try {
-			await invoke('open_session_folder', { sessionId })
-		} catch (e) {
-			console.error('Failed to open folder:', e)
+	function getAttachmentTargetSession(): Session | null {
+		const candidates = [...selectedSpaceSessions]
+		if (candidates.length === 0) return null
+		const active = candidates.filter((s) => s.status.toLowerCase() === 'active')
+		const source = active.length > 0 ? active : candidates
+		source.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+		return source[0] || null
+	}
+
+	async function attachPathsToSession(paths: string[]) {
+		if (!selectedSpace) return
+		const clean = paths.map((p) => p.trim()).filter((p) => p.length > 0)
+		if (clean.length === 0) return
+		const target = getAttachmentTargetSession()
+		if (!target) {
+			toast.error('No session available in this space', {
+				description: 'Start or accept a session first, then attach files.',
+			})
+			return
+		}
+		const copied = await invoke<string[]>('add_files_to_session', {
+			sessionId: target.session_id,
+			filePaths: clean,
+		})
+		const count = copied?.length || 0
+		if (count > 0) {
+			await spaceConversationAdapter(selectedSpace).sendMessage(
+				`Attached ${count} item${count === 1 ? '' : 's'} to session "${target.name}".`,
+			)
+			toast.success(`Attached ${count} item${count === 1 ? '' : 's'}`)
 		}
 	}
 
-	// Utility functions
-	function getOtherParticipant(participants: string[]): string {
-		const other = participants.find(
-			(p) => p.toLowerCase() !== currentUserEmail.toLowerCase()
-		)
-		return other || participants[0] || ''
-	}
-
-	function getInitials(email: string): string {
-		if (!email) return '?'
-		const name = email.split('@')[0]
-		return name.slice(0, 2).toUpperCase()
-	}
-
-	function formatTime(dateStr: string | null): string {
-		if (!dateStr) return ''
-		const date = new Date(dateStr)
-		const now = new Date()
-		const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24))
-
-		if (diffDays === 0) {
-			return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-		} else if (diffDays === 1) {
-			return 'Yesterday'
-		} else if (diffDays < 7) {
-			return date.toLocaleDateString([], { weekday: 'short' })
-		} else {
-			return date.toLocaleDateString([], { month: 'short', day: 'numeric' })
-		}
-	}
-
-	function formatFullTime(dateStr: string): string {
-		const date = new Date(dateStr)
-		return date.toLocaleString([], {
-			month: 'short',
-			day: 'numeric',
-			hour: '2-digit',
-			minute: '2-digit'
+	function spaceConversationAdapter(space: CollaborationSpace): ConversationAdapter<VaultMessage> {
+		return buildSpaceConversationAdapter<VaultMessage>({
+			invoke,
+			spaceId: space.space_id,
+			threadId: space.thread_id,
+			spaceName: space.name,
+			participants: space.participants,
+			currentUserEmail,
+			dedupeMessages: dedupeSpaceMessages,
+			kindLabel: (msg: VaultMessage) => badgeForKind(getMessageKind(msg)),
+			onAfterSend: () => onAfterSpaceSend(space.space_id),
+			attachPaths: (paths: string[]) => attachPathsToSession(paths),
 		})
 	}
 
-	function isOutgoing(msg: VaultMessage): boolean {
-		return msg.from.toLowerCase() === currentUserEmail.toLowerCase()
+	function openCreateSessionDialog() {
+		createSessionError = ''
+		createSessionName = selectedSpace ? `Session with ${selectedSpace.name}` : 'New session'
+		createSessionDialogOpen = true
 	}
 
-	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'Enter' && !e.shiftKey) {
-			e.preventDefault()
-			sendMessage()
+	async function createSessionFromContext() {
+		const name = createSessionName.trim()
+		if (!name || createSessionLoading) return
+		createSessionLoading = true
+		createSessionError = ''
+		try {
+			const peer =
+				selectedSpace?.participants.find(
+					(p) => normalizeIdentity(p)?.toLowerCase() !== currentUserEmail.toLowerCase(),
+				) || null
+			const created = await invoke<Session>('create_session', {
+				request: { name, peer },
+			})
+			createSessionDialogOpen = false
+			await loadSessions()
+			if (created?.session_id) navigateToSessionWorkspace(created.session_id, 'overview')
+		} catch (e) {
+			createSessionError = String(e)
+		} finally {
+			createSessionLoading = false
+		}
+	}
+
+	async function openSelectedWorkspaceSession(session: Session) {
+		navigateToSessionWorkspace(session.session_id, 'overview')
+	}
+
+	function toggleSpaceContact(identity: string) {
+		const safeIdentity = normalizeIdentity(identity)
+		if (!safeIdentity) return
+		if (createSpaceSelected.includes(safeIdentity)) {
+			createSpaceSelected = createSpaceSelected.filter((v) => v !== safeIdentity)
+		} else {
+			createSpaceSelected = [...createSpaceSelected, safeIdentity]
+		}
+	}
+
+	async function openCreateSpaceDialog(preselectIdentity?: unknown) {
+		const preselected = normalizeIdentity(preselectIdentity)
+		createSpaceError = ''
+		createSpaceName = preselected ? `Space with ${preselected}` : ''
+		createSpaceQuery = ''
+		createSpaceSelected = preselected ? [preselected] : []
+		createSpaceConfirmAdd = false
+		createSpaceLoading = true
+		try {
+			await loadContacts()
+			createSpaceDialogOpen = true
+		} catch (e) {
+			createSpaceError = String(e)
+		} finally {
+			createSpaceLoading = false
+		}
+	}
+
+	async function createSpaceFromDialog() {
+		if (createSpaceLoading) return
+		if (createSpaceSelected.length < 1) {
+			createSpaceError = 'Select at least 1 contact'
+			return
+		}
+		const toImport = createSpaceSelected.filter(
+			(id) => {
+				const safe = normalizeIdentity(id)
+				return safe ? !contactIdentitySet.has(safe.toLowerCase()) : false
+			},
+		)
+		if (toImport.length > 0 && !createSpaceConfirmAdd) {
+			createSpaceError =
+				'Confirm adding selected discovered contacts before creating the space'
+			return
+		}
+		createSpaceLoading = true
+		createSpaceError = ''
+		try {
+			for (const identity of toImport) {
+				await invoke('network_import_contact', { identity })
+			}
+			const current = normalizeIdentity(currentUserEmail)
+			const desiredParticipants = [
+				...createSpaceSelected,
+				...(current ? [current] : []),
+			]
+			const desiredSig = participantSignature(desiredParticipants)
+			const existing = spaces.find((s) => participantSignature(s.participants) === desiredSig)
+			if (existing) {
+				createSpaceDialogOpen = false
+				selectSpace(existing)
+				toast.info('Space already exists. Opened it.')
+				return
+			}
+
+			const spaceLabel = createSpaceName.trim() || 'New Space'
+			await invoke('send_message', {
+				request: {
+					recipients: createSpaceSelected,
+					subject: spaceLabel,
+					body: `Created space: ${spaceLabel}`,
+				},
+			})
+			createSpaceDialogOpen = false
+			await loadSidebar(true)
+			const created = spaces.find((s) => participantSignature(s.participants) === desiredSig)
+			if (created) {
+				selectSpace(created)
+			}
+			toast.success('Space created')
+		} catch (e) {
+			createSpaceError = String(e)
+		} finally {
+			createSpaceLoading = false
+		}
+	}
+
+	async function acceptSessionFromMessage(msg: VaultMessage) {
+		const sessionId = getSessionInviteId(msg)
+		if (!sessionId) return
+		setEventLoading(msg.id, true)
+		try {
+			await invoke('accept_session_invitation', { sessionId })
+			await loadSessions()
+			await loadSidebar(true)
+		} finally {
+			setEventLoading(msg.id, false)
+		}
+	}
+
+	async function declineSessionFromMessage(msg: VaultMessage) {
+		const sessionId = getSessionInviteId(msg)
+		if (!sessionId) return
+		setEventLoading(msg.id, true)
+		try {
+			await invoke('reject_session_invitation', { sessionId, reason: null })
+			await loadSessions()
+		} finally {
+			setEventLoading(msg.id, false)
+		}
+	}
+
+	async function openSessionFromMessage(msg: VaultMessage) {
+		const sessionId = getSessionResponseId(msg) || getSessionInviteId(msg)
+		if (!sessionId) return
+		setEventLoading(msg.id, true)
+		try {
+			await invoke('open_session_folder', { sessionId })
+		} finally {
+			setEventLoading(msg.id, false)
+		}
+	}
+
+	async function importFlowFromMessage(msg: VaultMessage) {
+		const meta = getFlowRequestMeta(msg)
+		const flowLocation = meta?.flow_location
+		if (typeof flowLocation !== 'string' || !flowLocation.trim()) return
+		setEventLoading(msg.id, true)
+		try {
+			await invoke('import_flow_from_request', {
+				name: null,
+				flowLocation,
+				overwrite: false,
+			})
+			toast.success('Flow imported')
+		} catch (e) {
+			toast.error('Failed to import flow', { description: String(e) })
+		} finally {
+			setEventLoading(msg.id, false)
+		}
+	}
+
+	async function importFlowResultsFromMessage(msg: VaultMessage) {
+		const meta = getFlowResultsMeta(msg)
+		const resultsLocation = meta?.results_location
+		if (typeof resultsLocation !== 'string' || !resultsLocation.trim()) return
+		setEventLoading(msg.id, true)
+		try {
+			await invoke('import_flow_results', {
+				resultsLocation,
+				submissionId:
+					typeof meta?.submission_id === 'string' ? meta.submission_id : null,
+				runId: typeof meta?.run_id === 'number' ? meta.run_id : null,
+				flowName: typeof meta?.flow_name === 'string' ? meta.flow_name : null,
+			})
+			toast.success('Results imported')
+		} catch (e) {
+			toast.error('Failed to import results', { description: String(e) })
+		} finally {
+			setEventLoading(msg.id, false)
 		}
 	}
 
 	function startAutoRefresh() {
-		if (refreshInterval) return
-		refreshInterval = setInterval(() => {
-			if (isAuthenticated) {
-				loadThreads(true)
-				loadSessions()
-				if (selectedThread) {
-					loadMessages(selectedThread.thread_id)
+		if (refreshTimer) return
+		refreshTimer = setInterval(async () => {
+			if (!isAuthenticated) return
+			await loadSidebar(true)
+			if (selectedSpace) {
+				const refreshed = spaces.find((s) => s.space_id === selectedSpace?.space_id)
+				if (refreshed) {
+					selectedSpace = refreshed
+					spaceChatReloadSignal += 1
 				}
 			}
 		}, AUTO_REFRESH_MS)
 	}
 
 	function stopAutoRefresh() {
-		if (refreshInterval) {
-			clearInterval(refreshInterval)
-			refreshInterval = null
+		if (refreshTimer) {
+			clearInterval(refreshTimer)
+			refreshTimer = null
 		}
 	}
 
 	onMount(async () => {
 		await syftboxAuthStore.checkAuth()
 		currentUserEmail = await getCurrentUserEmail()
-
 		if (syftboxAuthStore.isAuthenticated) {
-			await loadAllData(true)
+			await loadSidebar(true)
 		}
 		loading = false
-
-		if (syftboxAuthStore.isAuthenticated) {
-			startAutoRefresh()
-		}
+		if (syftboxAuthStore.isAuthenticated) startAutoRefresh()
 	})
 
 	onDestroy(() => {
@@ -508,20 +649,13 @@
 	})
 </script>
 
-<div class="flex h-full flex-col">
-	<PageHeader title="Collaborate" description="Messages, sessions, and contacts">
+<div class="flex h-full flex-col bg-[radial-gradient(1200px_600px_at_0%_-10%,hsl(var(--muted))_0%,transparent_55%)]">
+	<PageHeader title="Spaces" description="Collaborate with your team in shared spaces.">
 		{#if isAuthenticated}
-			{#if activeMainTab === 'messages'}
-				<Button size="sm" onclick={startCompose}>
-					<PlusIcon class="size-4" />
-					New Message
-				</Button>
-			{:else if activeMainTab === 'sessions'}
-				<Button size="sm" disabled>
-					<PlusIcon class="size-4" />
-					New Session
-				</Button>
-			{/if}
+			<Button size="sm" onclick={openCreateSpaceDialog}>
+				<PlusIcon class="size-4" />
+				Create Space
+			</Button>
 		{/if}
 	</PageHeader>
 
@@ -538,7 +672,7 @@
 					</Empty.Media>
 					<Empty.Title>Connect to SyftBox</Empty.Title>
 					<Empty.Description>
-						Connect to SyftBox to access secure messaging, sessions, and collaborate with others.
+						Connect to SyftBox to access secure collaboration.
 					</Empty.Description>
 				</Empty.Header>
 				<Empty.Content>
@@ -547,638 +681,313 @@
 						Connect to SyftBox
 					</Button>
 				</Empty.Content>
-				<div class="mt-6 pt-6 border-t max-w-sm text-center">
-					<p class="text-xs font-medium text-muted-foreground mb-1">What is SyftBox?</p>
-					<p class="text-xs text-muted-foreground mb-3">
-						An open-source network for privacy-first, offline-capable AI. Build apps, run federated
-						learning, and advance PETs research.
-					</p>
-					<button
-						type="button"
-						class="text-xs text-primary hover:underline inline-flex items-center gap-1"
-						onclick={() => openUrl('https://www.syftbox.net/')}
-					>
-						Learn more at syftbox.net
-						<ExternalLinkIcon class="size-3" />
-					</button>
-				</div>
 			</Empty.Root>
 		</div>
 	{:else}
-		<div class="flex flex-1 overflow-hidden">
-			<!-- Left Sidebar with Tabs -->
-			<div class="w-80 shrink-0 border-r flex flex-col bg-muted/30">
-				<!-- Main Tab Navigation -->
-				<div class="flex flex-col h-full">
-					<div class="flex border-b">
-						<button
-							type="button"
-							onclick={() => (activeMainTab = 'messages')}
-							class="flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors {activeMainTab === 'messages'
-								? 'text-foreground border-b-2 border-primary bg-background'
-								: 'text-muted-foreground hover:text-foreground'}"
-						>
-							<MessageSquareIcon class="size-4" />
-							Messages
-							{#if unreadMessageCount > 0}
-								<Badge variant="default" class="h-5 min-w-5 text-xs ml-1">
-									{unreadMessageCount}
-								</Badge>
-							{/if}
-						</button>
-						<button
-							type="button"
-							onclick={() => (activeMainTab = 'sessions')}
-							class="flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors {activeMainTab === 'sessions'
-								? 'text-foreground border-b-2 border-primary bg-background'
-								: 'text-muted-foreground hover:text-foreground'}"
-						>
-							<LockIcon class="size-4" />
-							Sessions
-							{#if pendingInvitesCount > 0}
-								<Badge variant="secondary" class="h-5 min-w-5 text-xs ml-1">
-									{pendingInvitesCount}
-								</Badge>
-							{/if}
-						</button>
-						<button
-							type="button"
-							onclick={() => (activeMainTab = 'contacts')}
-							class="flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors {activeMainTab === 'contacts'
-								? 'text-foreground border-b-2 border-primary bg-background'
-								: 'text-muted-foreground hover:text-foreground'}"
-						>
-							<UsersIcon class="size-4" />
-							Contacts
-						</button>
+		<div class="flex min-h-0 flex-1 gap-4 overflow-hidden p-4">
+			<div class="flex w-80 shrink-0 flex-col overflow-hidden rounded-2xl border bg-background/95 shadow-sm backdrop-blur">
+				<div class="shrink-0 border-b bg-muted/20 px-4 py-3">
+					<div class="flex items-center gap-2 text-sm font-medium">
+						<UsersIcon class="size-4 text-muted-foreground" />
+						Spaces
 					</div>
+				</div>
 
-					<!-- Messages Tab Content -->
-					{#if activeMainTab === 'messages'}
-					<div class="flex-1 flex flex-col overflow-hidden">
-						<div class="p-3 border-b">
-							<div class="relative">
-								<SearchIcon
-									class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground"
-								/>
-								<Input placeholder="Search messages..." bind:value={searchQuery} class="pl-9 h-9" />
-							</div>
+				<div class="shrink-0 border-b p-3.5">
+					<div class="relative">
+						<SearchIcon class="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+						<Input placeholder="Search spaces..." bind:value={listSearch} class="h-10 pl-9" />
+					</div>
+				</div>
+
+				<div class="min-h-0 flex-1 overflow-auto p-2">
+					{#if loadingList}
+						<div class="space-y-2 p-3">
+							<Skeleton class="h-10 w-full" />
+							<Skeleton class="h-10 w-full" />
+							<Skeleton class="h-10 w-full" />
 						</div>
-						<div class="flex-1 overflow-auto">
-							{#each filteredThreads as thread (thread.thread_id)}
-								{@const otherParticipant = getOtherParticipant(thread.participants)}
-								<button
-									type="button"
-									onclick={() => selectThread(thread)}
-									class="w-full text-left p-3 border-b hover:bg-muted/50 transition-colors {selectedThread?.thread_id ===
-									thread.thread_id
-										? 'bg-muted'
-										: ''}"
-								>
-									<div class="flex gap-3">
-										<Avatar.Root class="size-10 shrink-0">
-											<Avatar.Fallback class="text-xs">
-												{thread.session_id ? '🔐' : getInitials(otherParticipant)}
-											</Avatar.Fallback>
-										</Avatar.Root>
-										<div class="flex-1 min-w-0">
-											<div class="flex items-center justify-between gap-2">
-												<span
-													class="font-medium truncate text-sm {thread.unread_count > 0
-														? 'text-foreground'
-														: 'text-muted-foreground'}"
-												>
-													{thread.session_id
-														? thread.session_name || 'Secure Session'
-														: otherParticipant || 'Unknown'}
-												</span>
-												<span class="text-xs text-muted-foreground shrink-0">
-													{formatTime(thread.last_message_at)}
-												</span>
-											</div>
-											<p
-												class="text-sm truncate {thread.unread_count > 0
-													? 'font-medium text-foreground'
-													: 'text-muted-foreground'}"
-											>
-												{thread.subject}
-											</p>
-											<p class="text-xs text-muted-foreground truncate mt-0.5">
-												{thread.last_message_preview}
-											</p>
-										</div>
-										{#if thread.unread_count > 0}
-											<Badge variant="default" class="shrink-0 h-5 min-w-5 justify-center">
-												{thread.unread_count > 9 ? '9+' : thread.unread_count}
-											</Badge>
-										{/if}
+					{:else}
+						{#each filteredSpaces as space (space.space_id)}
+							<button
+								type="button"
+								onclick={() => selectSpace(space)}
+								class="mb-1 w-full rounded-xl border p-3 text-left transition-colors hover:bg-muted/50 {selectedSpace?.space_id ===
+								space.space_id
+									? 'border-primary/40 bg-primary/10'
+									: ''}"
+							>
+								<div class="flex items-center gap-3">
+									<Avatar.Root class="size-9 shrink-0">
+										<Avatar.Fallback class="text-xs">{initials(space.name || 'SP')}</Avatar.Fallback>
+									</Avatar.Root>
+									<div class="min-w-0 flex-1">
+										<p class="truncate text-sm font-medium">{space.name}</p>
+										<p class="truncate text-xs text-muted-foreground">
+											{space.member_count} members • {space.last_message_preview}
+										</p>
 									</div>
-								</button>
-							{:else}
-								<div class="p-6 text-center text-muted-foreground text-sm">
-									{searchQuery ? 'No matching conversations' : 'No conversations yet'}
+									<span class="text-xs text-muted-foreground">{formatTime(space.last_activity_at)}</span>
 								</div>
-							{/each}
-						</div>
-					</div>
-					{/if}
-
-					<!-- Sessions Tab Content -->
-					{#if activeMainTab === 'sessions'}
-					<div class="flex-1 flex flex-col overflow-hidden">
-						<div class="p-3 border-b flex gap-2">
-							<div class="relative flex-1">
-								<SearchIcon
-									class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground"
-								/>
-								<Input
-									placeholder="Search sessions..."
-									bind:value={sessionSearchQuery}
-									class="pl-9 h-9"
-								/>
+							</button>
+						{:else}
+							<div class="p-6 text-center text-sm text-muted-foreground">
+								No spaces found
 							</div>
-							<Button variant="outline" size="icon" class="h-9 w-9" onclick={loadSessions}>
-								<RefreshCwIcon class="size-4 {loadingSessions ? 'animate-spin' : ''}" />
-							</Button>
-						</div>
-						<div class="flex-1 overflow-auto">
-							{#if loadingSessions && sessions.length === 0}
-								<div class="flex items-center justify-center p-8">
-									<Loader2Icon class="size-6 animate-spin text-muted-foreground" />
-								</div>
-							{:else}
-								<!-- Pending Invitations -->
-								{#if sessionInvitations.length > 0}
-									<div
-										class="px-3 py-2 text-xs font-medium text-muted-foreground bg-amber-50 dark:bg-amber-950/30 flex items-center gap-1.5"
-									>
-										<InboxIcon class="size-3.5" />
-										Pending Invitations ({sessionInvitations.length})
-									</div>
-									{#each sessionInvitations as invite (invite.session_id)}
-										<div
-											class="p-3 border-b bg-amber-50/50 dark:bg-amber-950/20 hover:bg-amber-100/50 dark:hover:bg-amber-950/40 transition-colors"
-										>
-											<div class="flex items-start gap-3">
-												<Avatar.Root class="size-10 shrink-0">
-													<Avatar.Fallback class="text-xs bg-amber-100 dark:bg-amber-900">
-														🔐
-													</Avatar.Fallback>
-												</Avatar.Root>
-												<div class="flex-1 min-w-0">
-													<p class="font-medium text-sm truncate">{invite.session_name}</p>
-													<p class="text-xs text-muted-foreground truncate">
-														From {invite.requester}
-													</p>
-													{#if invite.description}
-														<p class="text-xs text-muted-foreground mt-1 line-clamp-2">
-															{invite.description}
-														</p>
-													{/if}
-													<div class="flex gap-2 mt-2">
-														<Button
-															size="sm"
-															class="h-7 text-xs"
-															onclick={() => acceptInvitation(invite.session_id)}
-														>
-															Accept
-														</Button>
-														<Button
-															variant="outline"
-															size="sm"
-															class="h-7 text-xs"
-															onclick={() => rejectInvitation(invite.session_id)}
-														>
-															Decline
-														</Button>
-													</div>
-												</div>
-											</div>
-										</div>
-									{/each}
-								{/if}
-
-								<!-- Active Sessions -->
-								{#if filteredSessions.length > 0}
-									{#if sessionInvitations.length > 0}
-										<div
-											class="px-3 py-2 text-xs font-medium text-muted-foreground bg-muted/50 flex items-center gap-1.5 mt-2"
-										>
-											<LockIcon class="size-3.5" />
-											Your Sessions ({filteredSessions.length})
-										</div>
-									{/if}
-									{#each filteredSessions as session (session.session_id)}
-										<button
-											type="button"
-											onclick={() => selectSession(session)}
-											class="w-full text-left p-3 border-b hover:bg-muted/50 transition-colors {selectedSession?.session_id ===
-											session.session_id
-												? 'bg-muted'
-												: ''}"
-										>
-											<div class="flex items-center gap-3">
-												<Avatar.Root class="size-10 shrink-0">
-													<Avatar.Fallback class="text-xs">🔐</Avatar.Fallback>
-												</Avatar.Root>
-												<div class="flex-1 min-w-0">
-													<div class="flex items-center justify-between gap-2">
-														<span class="font-medium text-sm truncate">{session.name}</span>
-														<Badge
-															variant={session.status === 'active' ? 'default' : 'secondary'}
-															class="text-xs"
-														>
-															{session.status}
-														</Badge>
-													</div>
-													<p class="text-xs text-muted-foreground truncate">
-														{session.peer ? `with ${session.peer}` : 'No collaborator yet'}
-													</p>
-													<p class="text-xs text-muted-foreground mt-0.5">
-														{formatTime(session.created_at)}
-													</p>
-												</div>
-											</div>
-										</button>
-									{/each}
-								{:else if sessionInvitations.length === 0}
-									<div class="p-6 text-center text-muted-foreground text-sm">
-										{sessionSearchQuery ? 'No matching sessions' : 'No sessions yet'}
-									</div>
-								{/if}
-							{/if}
-						</div>
-					</div>
-					{/if}
-
-					<!-- Contacts Tab Content -->
-					{#if activeMainTab === 'contacts'}
-					<div class="flex-1 flex flex-col overflow-hidden">
-						<div class="p-3 border-b flex gap-2">
-							<div class="relative flex-1">
-								<SearchIcon
-									class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground"
-								/>
-								<Input
-									placeholder="Search contacts..."
-									bind:value={contactSearchQuery}
-									class="pl-9 h-9"
-								/>
-							</div>
-							<Button variant="outline" size="icon" class="h-9 w-9" onclick={loadContacts}>
-								<RefreshCwIcon class="size-4 {loadingContacts ? 'animate-spin' : ''}" />
-							</Button>
-						</div>
-						<div class="flex-1 overflow-auto">
-							{#if loadingContacts && contacts.length === 0}
-								<div class="flex items-center justify-center p-8">
-									<Loader2Icon class="size-6 animate-spin text-muted-foreground" />
-								</div>
-							{:else}
-								<!-- Trusted Contacts -->
-								{#if filteredContacts.length > 0}
-									<div
-										class="px-3 py-2 text-xs font-medium text-muted-foreground bg-muted/50 flex items-center gap-1.5"
-									>
-										<UserCheckIcon class="size-3.5" />
-										Trusted Contacts ({filteredContacts.length})
-									</div>
-									{#each filteredContacts as contact (contact.identity)}
-										<div
-											class="flex items-center gap-3 p-3 border-b hover:bg-muted/50 transition-colors"
-										>
-											<Avatar.Root class="size-10 shrink-0">
-												<Avatar.Fallback class="text-xs">
-													{getInitials(contact.identity)}
-												</Avatar.Fallback>
-											</Avatar.Root>
-											<div class="flex-1 min-w-0">
-												<p class="font-medium text-sm truncate">{contact.identity}</p>
-												{#if contact.fingerprint}
-													<p class="text-xs text-muted-foreground truncate">
-														{contact.fingerprint.slice(0, 16)}...
-													</p>
-												{/if}
-											</div>
-											<div class="flex items-center gap-1">
-												<Button
-													variant="ghost"
-													size="icon"
-													class="h-8 w-8"
-													onclick={() => messageContact(contact.identity)}
-													title="Send message"
-												>
-													<MessageSquareIcon class="size-4" />
-												</Button>
-												<Button
-													variant="ghost"
-													size="icon"
-													class="h-8 w-8 text-muted-foreground hover:text-destructive"
-													onclick={() => removeContact(contact.identity)}
-													title="Remove contact"
-												>
-													<TrashIcon class="size-4" />
-												</Button>
-											</div>
-										</div>
-									{/each}
-								{/if}
-
-								<!-- Discovered Users -->
-								{#if filteredDiscovered.length > 0}
-									<div
-										class="px-3 py-2 text-xs font-medium text-muted-foreground bg-muted/50 flex items-center gap-1.5 {filteredContacts.length >
-										0
-											? 'mt-2'
-											: ''}"
-									>
-										<UsersIcon class="size-3.5" />
-										Network ({filteredDiscovered.length})
-									</div>
-									{#each filteredDiscovered as user (user.identity)}
-										<div
-											class="flex items-center gap-3 p-3 border-b hover:bg-muted/50 transition-colors"
-										>
-											<Avatar.Root class="size-10 shrink-0">
-												<Avatar.Fallback class="text-xs bg-muted">
-													{getInitials(user.identity)}
-												</Avatar.Fallback>
-											</Avatar.Root>
-											<div class="flex-1 min-w-0">
-												<p class="text-sm truncate text-muted-foreground">{user.identity}</p>
-											</div>
-											<Button
-												variant="outline"
-												size="sm"
-												class="h-8 gap-1"
-												onclick={() => addContact(user.identity)}
-											>
-												<UserPlusIcon class="size-3.5" />
-												Add
-											</Button>
-										</div>
-									{/each}
-								{/if}
-
-								{#if filteredContacts.length === 0 && filteredDiscovered.length === 0}
-									<div class="p-6 text-center text-muted-foreground text-sm">
-										{#if contactSearchQuery}
-											No contacts found matching "{contactSearchQuery}"
-										{:else}
-											No contacts yet
-										{/if}
-									</div>
-								{/if}
-							{/if}
-						</div>
-					</div>
+						{/each}
 					{/if}
 				</div>
 			</div>
 
-			<!-- Main Content Area -->
-			<div class="flex-1 flex flex-col min-w-0">
-				{#if activeMainTab === 'messages'}
-					<!-- Messages View -->
-					{#if isComposing}
-						<div class="border-b p-4">
-							<div class="flex items-center gap-3">
-								<Button variant="ghost" size="icon" onclick={cancelCompose}>
-									<ArrowLeftIcon class="size-5" />
-								</Button>
-								<h2 class="font-semibold">New Message</h2>
+			<div class="min-h-0 flex flex-1 flex-col overflow-hidden rounded-2xl border bg-background/95 shadow-sm backdrop-blur">
+				{#if selectedSpace}
+					<div class="shrink-0 border-b px-5 py-4">
+						<div class="flex items-center justify-between gap-3">
+							<div class="min-w-0">
+								<h2 class="truncate text-base font-semibold">{selectedSpace.name}</h2>
+								<p class="text-sm text-muted-foreground">{selectedSpace.member_count} members</p>
 							</div>
-						</div>
-						<div class="flex-1 overflow-auto p-4 space-y-4">
-							<div class="space-y-2">
-								<label for="recipient" class="text-sm font-medium">To</label>
-								<Input
-									id="recipient"
-									placeholder="recipient@example.com"
-									bind:value={composeRecipient}
-								/>
-							</div>
-							<div class="space-y-2">
-								<label for="subject" class="text-sm font-medium">Subject</label>
-								<Input id="subject" placeholder="Subject" bind:value={composeSubject} />
-							</div>
-							<div class="space-y-2">
-								<label for="body" class="text-sm font-medium">Message</label>
-								<Textarea
-									id="body"
-									placeholder="Write your message..."
-									bind:value={composeBody}
-									rows={8}
-									class="resize-none"
-								/>
-							</div>
-						</div>
-						<div class="border-t p-4">
-							<div class="flex justify-end gap-2">
-								<Button variant="outline" onclick={cancelCompose}>Cancel</Button>
-								<Button
-									onclick={sendMessage}
-									disabled={sending || !composeRecipient.trim() || !composeBody.trim()}
-								>
-									{#if sending}
-										<Loader2Icon class="size-4 animate-spin" />
-										Sending...
-									{:else}
-										<SendIcon class="size-4" />
-										Send
-									{/if}
+							<div class="flex items-center gap-2">
+								{#if selectedSpaceSessions.length > 0}
+									<DropdownMenu.Root>
+										<DropdownMenu.Trigger>
+											<Button size="sm" variant="outline">
+												<MessageSquareIcon class="size-4" />
+												Sessions ({selectedSpaceSessions.length})
+											</Button>
+										</DropdownMenu.Trigger>
+										<DropdownMenu.Content class="w-72">
+											{#each selectedSpaceSessions as session (session.session_id)}
+												<DropdownMenu.Item onclick={() => openSelectedWorkspaceSession(session)}>
+													<div class="min-w-0">
+														<p class="truncate text-sm font-medium">{session.name}</p>
+														<p class="truncate text-xs text-muted-foreground">
+															{session.status} • {session.peer || session.owner}
+														</p>
+													</div>
+												</DropdownMenu.Item>
+											{/each}
+										</DropdownMenu.Content>
+									</DropdownMenu.Root>
+								{/if}
+								<Button size="sm" variant="outline" onclick={openCreateSessionDialog}>
+									<LockIcon class="size-4" />
+									Start Session
 								</Button>
 							</div>
 						</div>
-					{:else if selectedThread}
-						<div class="border-b p-4">
-							<div class="flex items-center gap-3">
-								<Avatar.Root class="size-10">
-									<Avatar.Fallback>
-										{selectedThread.session_id
-											? '🔐'
-											: getInitials(getOtherParticipant(selectedThread.participants))}
-									</Avatar.Fallback>
-								</Avatar.Root>
-								<div class="flex-1 min-w-0">
-									<h2 class="font-semibold truncate">
-										{selectedThread.session_id
-											? selectedThread.session_name || 'Secure Session'
-											: getOtherParticipant(selectedThread.participants)}
-									</h2>
-									<p class="text-sm text-muted-foreground truncate">
-										{selectedThread.subject}
-									</p>
-								</div>
-							</div>
-						</div>
-						<div id="message-container" class="flex-1 overflow-auto p-4 space-y-4">
-							{#if loadingMessages}
-								<div class="space-y-4">
-									{#each [1, 2, 3] as _}
-										<div class="flex gap-3">
-											<Skeleton class="size-8 rounded-full" />
-											<div class="space-y-2">
-												<Skeleton class="h-4 w-48" />
-												<Skeleton class="h-16 w-64 rounded-lg" />
-											</div>
-										</div>
-									{/each}
-								</div>
-							{:else}
-								{#each messages as msg (msg.id)}
-									{@const outgoing = isOutgoing(msg)}
-									<div class="flex {outgoing ? 'justify-end' : 'justify-start'}">
-										<div
-											class="max-w-[70%] {outgoing
-												? 'bg-primary text-primary-foreground'
-												: 'bg-muted'} rounded-2xl px-4 py-2.5"
+					</div>
+
+					<ConversationPanel
+						adapter={spaceConversationAdapter(selectedSpace)}
+						reloadSignal={spaceChatReloadSignal}
+					>
+						{#snippet actions(msg)}
+							{@const typed = msg as VaultMessage}
+							{@const kind = getMessageKind(typed)}
+							{#if kind === 'session_invite'}
+								{@const sessionId = getSessionInviteId(typed)}
+								{#if sessionId}
+									<div class="mt-2 flex gap-2">
+										<Button
+											size="sm"
+											class="h-7 text-xs"
+											disabled={eventActionLoading[typed.id]}
+											onclick={() => acceptSessionFromMessage(typed)}
 										>
-											<p class="text-sm whitespace-pre-wrap break-words">{msg.body}</p>
-											<p
-												class="text-xs mt-1 {outgoing
-													? 'text-primary-foreground/70'
-													: 'text-muted-foreground'}"
-											>
-												{formatFullTime(msg.created_at)}
-											</p>
-										</div>
-									</div>
-								{/each}
-							{/if}
-						</div>
-						<div class="border-t p-4">
-							<div class="flex gap-2">
-								<Textarea
-									placeholder="Write a reply..."
-									bind:value={draftMessage}
-									onkeydown={handleKeydown}
-									rows={1}
-									class="resize-none min-h-[40px]"
-								/>
-								<Button onclick={sendMessage} disabled={sending || !draftMessage.trim()} size="icon">
-									{#if sending}
-										<Loader2Icon class="size-4 animate-spin" />
-									{:else}
-										<SendIcon class="size-4" />
-									{/if}
-								</Button>
-							</div>
-						</div>
-					{:else}
-						<div class="flex-1 flex items-center justify-center text-muted-foreground">
-							<div class="text-center">
-								<InboxIcon class="size-12 mx-auto mb-4 opacity-50" />
-								<p>Select a conversation to view messages</p>
-							</div>
-						</div>
-					{/if}
-				{:else if activeMainTab === 'sessions'}
-					<!-- Sessions View -->
-					{#if selectedSession}
-						<div class="border-b p-4">
-							<div class="flex items-center justify-between">
-								<div class="flex items-center gap-3">
-									<Avatar.Root class="size-10">
-										<Avatar.Fallback>🔐</Avatar.Fallback>
-									</Avatar.Root>
-									<div>
-										<h2 class="font-semibold">{selectedSession.name}</h2>
-										<p class="text-sm text-muted-foreground">
-											{selectedSession.peer
-												? `with ${selectedSession.peer}`
-												: 'No collaborator yet'}
-										</p>
-									</div>
-								</div>
-								<div class="flex items-center gap-2">
-									<Badge
-										variant={selectedSession.status === 'active' ? 'default' : 'secondary'}
-									>
-										{selectedSession.status}
-									</Badge>
-									<Button
-										variant="outline"
-										size="sm"
-										onclick={() => openSessionFolder(selectedSession!.session_id)}
-									>
-										<FolderOpenIcon class="size-4" />
-										Open Folder
-									</Button>
-								</div>
-							</div>
-						</div>
-						<div class="flex-1 overflow-auto p-6">
-							<div class="space-y-6">
-								<!-- Session Details -->
-								<div class="space-y-4">
-									<h3 class="font-medium text-sm text-muted-foreground">Session Details</h3>
-									<div class="grid grid-cols-2 gap-4">
-										<div>
-											<p class="text-xs text-muted-foreground">Owner</p>
-											<p class="text-sm">{selectedSession.owner}</p>
-										</div>
-										<div>
-											<p class="text-xs text-muted-foreground">Created</p>
-											<p class="text-sm">{formatFullTime(selectedSession.created_at)}</p>
-										</div>
-										{#if selectedSession.session_path}
-											<div class="col-span-2">
-												<p class="text-xs text-muted-foreground">Path</p>
-												<p class="text-sm font-mono text-xs truncate">
-													{selectedSession.session_path}
-												</p>
-											</div>
-										{/if}
-									</div>
-								</div>
-
-								<!-- Placeholder for datasets and Jupyter -->
-								<div class="space-y-4">
-									<h3 class="font-medium text-sm text-muted-foreground">Linked Datasets</h3>
-									<div
-										class="border border-dashed rounded-lg p-6 text-center text-muted-foreground"
-									>
-										<DatabaseIcon class="size-8 mx-auto mb-2 opacity-50" />
-										<p class="text-sm">No datasets linked yet</p>
-									</div>
-								</div>
-
-								<div class="space-y-4">
-									<h3 class="font-medium text-sm text-muted-foreground">Jupyter Notebook</h3>
-									<div
-										class="border border-dashed rounded-lg p-6 text-center text-muted-foreground"
-									>
-										<PlayIcon class="size-8 mx-auto mb-2 opacity-50" />
-										<p class="text-sm">Jupyter not running</p>
-										<Button variant="outline" size="sm" class="mt-3" disabled>
-											Launch Jupyter
+											Accept
+										</Button>
+										<Button
+											variant="outline"
+											size="sm"
+											class="h-7 text-xs"
+											disabled={eventActionLoading[typed.id]}
+											onclick={() => declineSessionFromMessage(typed)}
+										>
+											Decline
+										</Button>
+										<Button
+											variant="outline"
+											size="sm"
+											class="h-7 text-xs"
+											onclick={() => navigateToSessionWorkspace(sessionId, 'overview')}
+										>
+											Workspace
 										</Button>
 									</div>
+								{/if}
+							{/if}
+							{#if kind === 'flow_request'}
+								<div class="mt-2 flex gap-2">
+									<Button
+										size="sm"
+										variant="outline"
+										class="h-7 text-xs"
+										disabled={eventActionLoading[typed.id]}
+										onclick={() => importFlowFromMessage(typed)}
+									>
+										Import Flow
+									</Button>
 								</div>
-							</div>
-						</div>
-					{:else}
-						<div class="flex-1 flex items-center justify-center text-muted-foreground">
-							<div class="text-center">
-								<LockIcon class="size-12 mx-auto mb-4 opacity-50" />
-								<p>Select a session to view details</p>
-							</div>
-						</div>
-					{/if}
-				{:else if activeMainTab === 'contacts'}
-					<!-- Contacts View - show selected contact details or empty state -->
-					<div class="flex-1 flex items-center justify-center text-muted-foreground">
-						<div class="text-center">
-							<UsersIcon class="size-12 mx-auto mb-4 opacity-50" />
-							<p>Select a contact from the sidebar</p>
-							<p class="text-sm mt-1">or discover new users on the network</p>
-						</div>
+							{/if}
+							{#if kind === 'flow_results'}
+								<div class="mt-2 flex gap-2">
+									<Button
+										size="sm"
+										variant="outline"
+										class="h-7 text-xs"
+										disabled={eventActionLoading[typed.id]}
+										onclick={() => importFlowResultsFromMessage(typed)}
+									>
+										Import Results
+									</Button>
+								</div>
+							{/if}
+							{#if kind === 'session_response'}
+								{@const responseSessionId = getSessionResponseId(typed)}
+								{#if responseSessionId}
+									<div class="mt-2 flex gap-2">
+										<Button
+											size="sm"
+											variant="outline"
+											class="h-7 text-xs"
+											onclick={() => navigateToSessionWorkspace(responseSessionId, 'overview')}
+										>
+											Workspace
+										</Button>
+										<Button
+											size="sm"
+											variant="outline"
+											class="h-7 text-xs"
+											disabled={eventActionLoading[typed.id]}
+											onclick={() => openSessionFromMessage(typed)}
+										>
+											Open Folder
+										</Button>
+									</div>
+								{/if}
+							{/if}
+						{/snippet}
+					</ConversationPanel>
+				{:else}
+					<div class="flex h-full items-center justify-center px-6 text-sm text-muted-foreground">
+						Choose a space from the left, or create one.
 					</div>
 				{/if}
 			</div>
 		</div>
 	{/if}
-</div>
 
-<SyftboxSignInDialog bind:open={signInDialogOpen} />
+	<SyftboxSignInDialog bind:open={signInDialogOpen} />
+	<Dialog.Root bind:open={createSessionDialogOpen}>
+		<Dialog.Content class="sm:max-w-md">
+			<Dialog.Header>
+				<Dialog.Title>Start Session</Dialog.Title>
+				<Dialog.Description>
+					{selectedSpace
+						? `Create a session from ${selectedSpace.name}.`
+						: 'Create a new collaboration session.'}
+				</Dialog.Description>
+			</Dialog.Header>
+
+			<div class="space-y-3 py-2">
+				<Input placeholder="Session name..." bind:value={createSessionName} />
+				{#if createSessionError}
+					<p class="text-sm text-destructive">{createSessionError}</p>
+				{/if}
+			</div>
+
+			<Dialog.Footer>
+				<Dialog.Close class="inline-flex h-9 items-center justify-center rounded-md border px-3 text-sm">
+					Cancel
+				</Dialog.Close>
+				<Button onclick={createSessionFromContext} disabled={createSessionLoading || !createSessionName.trim()}>
+					{#if createSessionLoading}
+						<Loader2Icon class="size-4 animate-spin" />
+						Creating...
+					{:else}
+						Start Session
+					{/if}
+				</Button>
+			</Dialog.Footer>
+		</Dialog.Content>
+	</Dialog.Root>
+	<Dialog.Root bind:open={createSpaceDialogOpen}>
+		<Dialog.Content class="sm:max-w-lg">
+			<Dialog.Header>
+				<Dialog.Title>Create Space</Dialog.Title>
+				<Dialog.Description>
+					Select contacts and create a shared conversation space.
+				</Dialog.Description>
+			</Dialog.Header>
+
+			<div class="space-y-3 py-2">
+				<Input placeholder="Space name (optional)" bind:value={createSpaceName} />
+				<Input placeholder="Search contacts..." bind:value={createSpaceQuery} />
+				{#if createSpaceError}
+					<p class="text-sm text-destructive">{createSpaceError}</p>
+				{/if}
+				<div class="max-h-72 overflow-auto rounded-md border">
+					{#if createSpaceLoading}
+						<div class="p-4 text-sm text-muted-foreground">Loading contacts...</div>
+					{:else if spaceCandidates.length === 0}
+						<div class="p-4 text-sm text-muted-foreground">No contacts available</div>
+					{:else}
+						{#each spaceCandidates as contact (contact.identity)}
+							{@const selected = createSpaceSelected.includes(contact.identity)}
+							<button
+								type="button"
+								class="flex w-full items-center justify-between border-b p-3 text-left last:border-b-0 hover:bg-muted/50"
+								onclick={() => toggleSpaceContact(contact.identity)}
+							>
+								<div class="min-w-0">
+									<p class="truncate text-sm font-medium">{contact.identity}</p>
+									<p class="text-xs text-muted-foreground">
+										{contact.source === 'contact' ? 'Contact' : 'Discovered'}
+									</p>
+								</div>
+								<div class="flex items-center gap-2">
+									{#if contact.source === 'discovered'}
+										<Badge variant="outline" class="text-[10px]">New</Badge>
+									{/if}
+									{#if selected}
+										<CheckIcon class="size-4 text-primary" />
+									{/if}
+								</div>
+							</button>
+						{/each}
+					{/if}
+				</div>
+				{#if selectedDiscoveredCount > 0}
+					<label class="flex items-start gap-2 rounded-md border p-2 text-xs text-muted-foreground">
+						<input
+							type="checkbox"
+							class="mt-0.5"
+							bind:checked={createSpaceConfirmAdd}
+						/>
+						<span>
+							Add {selectedDiscoveredCount} selected discovered {selectedDiscoveredCount === 1 ? 'contact' : 'contacts'} before creating this space.
+						</span>
+					</label>
+				{/if}
+				<p class="text-xs text-muted-foreground">
+					Selected: {createSpaceSelected.length}
+				</p>
+			</div>
+
+			<Dialog.Footer>
+				<Dialog.Close class="inline-flex h-9 items-center justify-center rounded-md border px-3 text-sm">
+					Cancel
+				</Dialog.Close>
+				<Button onclick={createSpaceFromDialog} disabled={createSpaceLoading}>
+					{#if createSpaceLoading}
+						<Loader2Icon class="size-4 animate-spin" />
+						Creating...
+					{:else}
+						Create Space
+					{/if}
+				</Button>
+			</Dialog.Footer>
+		</Dialog.Content>
+	</Dialog.Root>
+</div>

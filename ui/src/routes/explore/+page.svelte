@@ -319,6 +319,160 @@
 					</div>
 				</div>
 
+				{#snippet pipelineCard(template: FlowTemplate)}
+					{@const Icon = getTemplateIcon(template.icon)}
+					{@const colors = templateColors[template.color]}
+					{@const installed = isInstalled(template.id)}
+					<Card.Root class="hover:border-primary/50 transition-colors">
+						<Card.Header class="pb-2">
+							<div class="flex items-center gap-3">
+								<div
+									class="size-9 rounded-lg bg-gradient-to-br {colors.gradient} flex items-center justify-center text-white"
+								>
+									<Icon class="size-4" />
+								</div>
+								<div class="flex-1 min-w-0">
+									<Card.Title class="text-sm">{template.name}</Card.Title>
+									<p class="text-xs text-muted-foreground">{template.description}</p>
+								</div>
+							</div>
+						</Card.Header>
+						<Card.Content class="pt-2">
+							<div class="flex items-center justify-between">
+								<Badge variant="secondary" class="text-xs">Pipeline</Badge>
+								{#if installed}
+									<Badge variant="outline" class="text-xs text-green-600">
+										<CheckIcon class="size-3 mr-1" />
+										Installed
+									</Badge>
+								{:else}
+									<Button
+										variant="ghost"
+										size="sm"
+										class="h-7 text-xs"
+										onclick={() => installPipeline(template)}
+										disabled={installingPipeline !== null}
+									>
+										{#if installingPipeline === template.id}
+											<Loader2Icon class="size-3 animate-spin" />
+										{:else}
+											<DownloadIcon class="size-3" />
+											Install
+										{/if}
+									</Button>
+								{/if}
+							</div>
+						</Card.Content>
+					</Card.Root>
+				{/snippet}
+
+				{#snippet datasetCard(dataset: DiscoveredDataset)}
+					<Card.Root class="hover:border-primary/50 transition-colors">
+						<Card.Header class="pb-3">
+							<div class="flex items-start justify-between gap-2">
+								<div class="flex items-center gap-3">
+									{#if dataset.is_own}
+										<div class="size-10 rounded-lg bg-primary/10 flex items-center justify-center">
+											<DatabaseIcon class="size-5 text-primary" />
+										</div>
+									{:else}
+										<Avatar.Root class="size-10">
+											<Avatar.Fallback>{getInitials(dataset.owner)}</Avatar.Fallback>
+										</Avatar.Root>
+									{/if}
+									<div>
+										<Card.Title class="text-base">{dataset.name}</Card.Title>
+										<p class="text-xs text-muted-foreground truncate max-w-[150px]" title={dataset.owner}>
+											{dataset.is_own ? 'by you' : dataset.owner}
+										</p>
+									</div>
+								</div>
+								<div class="flex items-center gap-1">
+									{#if dataset.is_own}
+										<Badge variant="secondary">Yours</Badge>
+									{:else if dataset.is_trusted}
+										<Badge variant="outline" class="text-emerald-600 border-emerald-200 bg-emerald-50">
+											<ShieldCheckIcon class="size-3 mr-1" />
+											Trusted
+										</Badge>
+									{/if}
+								</div>
+							</div>
+						</Card.Header>
+						<Card.Content>
+							{#if dataset.description}
+								<p class="text-sm text-muted-foreground mb-3 line-clamp-2">{dataset.description}</p>
+							{/if}
+							<div class="flex items-center justify-between">
+								<div class="flex items-center gap-4 text-xs text-muted-foreground">
+									<span class="flex items-center gap-1">
+										<FileIcon class="size-3" />
+										{dataset.total_assets} files
+									</span>
+									{#if dataset.expected_bytes || dataset.downloaded_bytes}
+										<span>{formatFileSize(dataset.expected_bytes || dataset.downloaded_bytes)}</span>
+									{/if}
+								</div>
+								{#if !dataset.is_own}
+									{#if dataset.available}
+										<Badge variant="secondary" class="text-xs">
+											<DownloadIcon class="size-3 mr-1" />
+											Available
+										</Badge>
+									{:else if dataset.missing_assets > 0}
+										<Badge variant="outline" class="text-xs">
+											{dataset.present_assets}/{dataset.total_assets} synced
+										</Badge>
+									{/if}
+								{/if}
+							</div>
+							{#if !dataset.is_own}
+								<div class="flex items-center gap-2 mt-4 pt-4 border-t">
+									<Button
+										variant="outline"
+										size="sm"
+										class="flex-1 text-xs"
+										onclick={() => openVerifyDialog(dataset)}
+									>
+										<RocketIcon class="size-3 mr-1" />
+										Verify Mock
+									</Button>
+									{#if localDatasetNames.has(dataset.name)}
+										<Button
+											variant="secondary"
+											size="sm"
+											class="text-xs gap-1.5"
+											onclick={() => unpinDataset(dataset)}
+											disabled={unpinning === dataset.name}
+										>
+											{#if unpinning === dataset.name}
+												<Loader2Icon class="size-3 animate-spin" />
+											{:else}
+												<StarIcon class="size-3 fill-primary text-primary" />
+												Starred
+											{/if}
+										</Button>
+									{:else}
+										<Button
+											variant="outline"
+											size="sm"
+											class="text-xs"
+											onclick={() => pinDataset(dataset)}
+											disabled={pinning === dataset.name}
+										>
+											{#if pinning === dataset.name}
+												<Loader2Icon class="size-3 animate-spin" />
+											{:else}
+												<StarIcon class="size-3" />
+											{/if}
+										</Button>
+									{/if}
+								</div>
+							{/if}
+						</Card.Content>
+					</Card.Root>
+				{/snippet}
+
 				<!-- All Tab -->
 				{#if activeTab === 'all'}
 					<!-- Official Pipelines Section -->
@@ -329,50 +483,7 @@
 						</h3>
 						<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
 							{#each flowTemplates as template (template.id)}
-								{@const Icon = getTemplateIcon(template.icon)}
-								{@const colors = templateColors[template.color]}
-								{@const installed = isInstalled(template.id)}
-								<Card.Root class="hover:border-primary/50 transition-colors">
-									<Card.Header class="pb-2">
-										<div class="flex items-center gap-3">
-											<div
-												class="size-9 rounded-lg bg-gradient-to-br {colors.gradient} flex items-center justify-center text-white"
-											>
-												<Icon class="size-4" />
-											</div>
-											<div class="flex-1 min-w-0">
-												<Card.Title class="text-sm">{template.name}</Card.Title>
-												<p class="text-xs text-muted-foreground">{template.description}</p>
-											</div>
-										</div>
-									</Card.Header>
-									<Card.Content class="pt-2">
-										<div class="flex items-center justify-between">
-											<Badge variant="secondary" class="text-xs">Pipeline</Badge>
-											{#if installed}
-												<Badge variant="outline" class="text-xs text-green-600">
-													<CheckIcon class="size-3 mr-1" />
-													Installed
-												</Badge>
-											{:else}
-												<Button
-													variant="ghost"
-													size="sm"
-													class="h-7 text-xs"
-													onclick={() => installPipeline(template)}
-													disabled={installingPipeline !== null}
-												>
-													{#if installingPipeline === template.id}
-														<Loader2Icon class="size-3 animate-spin" />
-													{:else}
-														<DownloadIcon class="size-3" />
-														Install
-													{/if}
-												</Button>
-											{/if}
-										</div>
-									</Card.Content>
-								</Card.Root>
+								{@render pipelineCard(template)}
 							{/each}
 						</div>
 					</div>
@@ -386,36 +497,7 @@
 							</h3>
 							<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
 								{#each ownDatasets as dataset}
-									<Card.Root class="hover:border-primary/50 transition-colors">
-										<Card.Header class="pb-3">
-											<div class="flex items-start justify-between gap-2">
-												<div class="flex items-center gap-3">
-													<div class="size-10 rounded-lg bg-primary/10 flex items-center justify-center">
-														<DatabaseIcon class="size-5 text-primary" />
-													</div>
-													<div>
-														<Card.Title class="text-base">{dataset.name}</Card.Title>
-														<p class="text-xs text-muted-foreground">by you</p>
-													</div>
-												</div>
-												<Badge variant="secondary">Yours</Badge>
-											</div>
-										</Card.Header>
-										<Card.Content>
-											{#if dataset.description}
-												<p class="text-sm text-muted-foreground mb-3 line-clamp-2">{dataset.description}</p>
-											{/if}
-											<div class="flex items-center gap-4 text-xs text-muted-foreground">
-												<span class="flex items-center gap-1">
-													<FileIcon class="size-3" />
-													{dataset.total_assets} files
-												</span>
-												{#if dataset.downloaded_bytes > 0}
-													<span>{formatFileSize(dataset.downloaded_bytes)}</span>
-												{/if}
-											</div>
-										</Card.Content>
-									</Card.Root>
+									{@render datasetCard(dataset)}
 								{/each}
 							</div>
 						</div>
@@ -430,96 +512,7 @@
 							</h3>
 							<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
 								{#each communityDatasets as dataset}
-									<Card.Root class="hover:border-primary/50 transition-colors">
-										<Card.Header class="pb-3">
-											<div class="flex items-start justify-between gap-2">
-												<div class="flex items-center gap-3">
-													<Avatar.Root class="size-10">
-														<Avatar.Fallback>{getInitials(dataset.owner)}</Avatar.Fallback>
-													</Avatar.Root>
-													<div>
-														<Card.Title class="text-base">{dataset.name}</Card.Title>
-														<p class="text-xs text-muted-foreground truncate max-w-[150px]" title={dataset.owner}>
-															{dataset.owner}
-														</p>
-													</div>
-												</div>
-												{#if dataset.is_trusted}
-													<Badge variant="outline" class="text-emerald-600 border-emerald-200 bg-emerald-50">
-														<ShieldCheckIcon class="size-3 mr-1" />
-														Trusted
-													</Badge>
-												{/if}
-											</div>
-										</Card.Header>
-										<Card.Content>
-											{#if dataset.description}
-												<p class="text-sm text-muted-foreground mb-3 line-clamp-2">{dataset.description}</p>
-											{/if}
-											<div class="flex items-center justify-between">
-												<div class="flex items-center gap-4 text-xs text-muted-foreground">
-													<span class="flex items-center gap-1">
-														<FileIcon class="size-3" />
-														{dataset.total_assets} files
-													</span>
-													{#if dataset.expected_bytes}
-														<span>{formatFileSize(dataset.expected_bytes)}</span>
-													{/if}
-												</div>
-												{#if dataset.available}
-													<Badge variant="secondary" class="text-xs">
-														<DownloadIcon class="size-3 mr-1" />
-														Available
-													</Badge>
-												{:else if dataset.missing_assets > 0}
-													<Badge variant="outline" class="text-xs">
-														{dataset.present_assets}/{dataset.total_assets} synced
-													</Badge>
-												{/if}
-											</div>
-											<div class="flex items-center gap-2 mt-4 pt-4 border-t">
-												<Button
-													variant="outline"
-													size="sm"
-													class="flex-1 text-xs"
-													onclick={() => openVerifyDialog(dataset)}
-												>
-													<RocketIcon class="size-3 mr-1" />
-													Verify Mock
-												</Button>
-												{#if localDatasetNames.has(dataset.name)}
-													<Button
-														variant="secondary"
-														size="sm"
-														class="text-xs gap-1.5"
-														onclick={() => unpinDataset(dataset)}
-														disabled={unpinning === dataset.name}
-													>
-														{#if unpinning === dataset.name}
-															<Loader2Icon class="size-3 animate-spin" />
-														{:else}
-															<StarIcon class="size-3 fill-primary text-primary" />
-															Starred
-														{/if}
-													</Button>
-												{:else}
-													<Button
-														variant="outline"
-														size="sm"
-														class="text-xs"
-														onclick={() => pinDataset(dataset)}
-														disabled={pinning === dataset.name}
-													>
-														{#if pinning === dataset.name}
-															<Loader2Icon class="size-3 animate-spin" />
-														{:else}
-															<StarIcon class="size-3" />
-														{/if}
-													</Button>
-												{/if}
-											</div>
-										</Card.Content>
-									</Card.Root>
+									{@render datasetCard(dataset)}
 								{/each}
 							</div>
 						</div>
@@ -564,55 +557,7 @@
 					{:else}
 						<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
 							{#each filteredDatasets() as dataset}
-								<Card.Root class="hover:border-primary/50 transition-colors">
-									<Card.Header class="pb-3">
-										<div class="flex items-start justify-between gap-2">
-											<div class="flex items-center gap-3">
-												{#if dataset.is_own}
-													<div class="size-10 rounded-lg bg-primary/10 flex items-center justify-center">
-														<DatabaseIcon class="size-5 text-primary" />
-													</div>
-												{:else}
-													<Avatar.Root class="size-10">
-														<Avatar.Fallback>{getInitials(dataset.owner)}</Avatar.Fallback>
-													</Avatar.Root>
-												{/if}
-												<div>
-													<Card.Title class="text-base">{dataset.name}</Card.Title>
-													<p class="text-xs text-muted-foreground truncate max-w-[150px]" title={dataset.owner}>
-														{dataset.is_own ? 'by you' : dataset.owner}
-													</p>
-												</div>
-											</div>
-											<div class="flex items-center gap-1">
-												{#if dataset.is_own}
-													<Badge variant="secondary">Yours</Badge>
-												{:else if dataset.is_trusted}
-													<Badge variant="outline" class="text-emerald-600 border-emerald-200 bg-emerald-50">
-														<ShieldCheckIcon class="size-3 mr-1" />
-														Trusted
-													</Badge>
-												{/if}
-											</div>
-										</div>
-									</Card.Header>
-									<Card.Content>
-										{#if dataset.description}
-											<p class="text-sm text-muted-foreground mb-3 line-clamp-2">{dataset.description}</p>
-										{/if}
-										<div class="flex items-center justify-between">
-											<div class="flex items-center gap-4 text-xs text-muted-foreground">
-												<span class="flex items-center gap-1">
-													<FileIcon class="size-3" />
-													{dataset.total_assets} files
-												</span>
-												{#if dataset.expected_bytes || dataset.downloaded_bytes}
-													<span>{formatFileSize(dataset.expected_bytes || dataset.downloaded_bytes)}</span>
-												{/if}
-											</div>
-										</div>
-									</Card.Content>
-								</Card.Root>
+								{@render datasetCard(dataset)}
 							{/each}
 						</div>
 					{/if}
@@ -628,62 +573,7 @@
 						</h3>
 						<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
 							{#each flowTemplates as template (template.id)}
-								{@const Icon = getTemplateIcon(template.icon)}
-								{@const colors = templateColors[template.color]}
-								{@const installed = isInstalled(template.id)}
-								<Card.Root class="hover:border-primary/50 transition-colors">
-									<Card.Header class="pb-3">
-										<div class="flex items-start justify-between gap-2">
-											<div class="flex items-center gap-3">
-												<div
-													class="size-10 rounded-lg bg-gradient-to-br {colors.gradient} flex items-center justify-center text-white"
-												>
-													<Icon class="size-5" />
-												</div>
-												<div>
-													<Card.Title class="text-base">{template.name}</Card.Title>
-													<p class="text-xs text-muted-foreground">BioVault Team</p>
-												</div>
-											</div>
-											<Badge variant="outline" class="text-emerald-600 border-emerald-200 bg-emerald-50">
-												<ShieldCheckIcon class="size-3 mr-1" />
-												Official
-											</Badge>
-										</div>
-									</Card.Header>
-									<Card.Content>
-										<p class="text-sm text-muted-foreground mb-4">{template.description}</p>
-										<div class="flex items-center justify-between">
-											<div class="flex items-center gap-2 text-xs text-muted-foreground">
-												<Badge variant="secondary" class="text-xs">Nextflow</Badge>
-											</div>
-											{#if installed}
-												<Button
-													variant="outline"
-													size="sm"
-													onclick={() => goto('/flows')}
-												>
-													<CheckIcon class="size-4 text-green-500" />
-													Installed
-												</Button>
-											{:else}
-												<Button
-													size="sm"
-													onclick={() => installPipeline(template)}
-													disabled={installingPipeline !== null}
-												>
-													{#if installingPipeline === template.id}
-														<Loader2Icon class="size-4 animate-spin" />
-														Installing...
-													{:else}
-														<DownloadIcon class="size-4" />
-														Install
-													{/if}
-												</Button>
-											{/if}
-										</div>
-									</Card.Content>
-								</Card.Root>
+								{@render pipelineCard(template)}
 							{/each}
 						</div>
 					</div>

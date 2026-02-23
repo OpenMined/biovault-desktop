@@ -257,6 +257,39 @@ pub struct MessageThreadSummary {
     pub session_name: Option<String>,
 }
 
+#[derive(Serialize, Clone)]
+pub struct CollaborationSpace {
+    pub space_id: String,
+    pub thread_id: String,
+    pub name: String,
+    pub participants: Vec<String>,
+    pub member_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_activity_at: Option<String>,
+    pub last_message_preview: String,
+    pub unread_count: usize,
+}
+
+#[derive(Serialize, Clone)]
+pub struct ContactTimelineEvent {
+    pub event_id: String,
+    pub message_id: String,
+    pub thread_id: String,
+    pub created_at: String,
+    pub kind: String,
+    pub direction: String,
+    pub from: String,
+    pub to: String,
+    pub summary: String,
+    pub body: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_name: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MessageFilterScope {
     Inbox,

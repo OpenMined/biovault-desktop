@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::env;
 use std::fs;
+use std::io::{Read, Seek, SeekFrom};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs, UdpSocket};
 use std::path::Path;
 use std::process::Command;
@@ -22,6 +23,81 @@ static LAST_CONTROL_PLANE_OK_LOG: AtomicU64 = AtomicU64::new(0);
 static LAST_KNOWN_WS_CONNECTED: AtomicBool = AtomicBool::new(false);
 static CONTROL_PLANE_LOG: once_cell::sync::Lazy<Mutex<Vec<ControlPlaneLogEntry>>> =
     once_cell::sync::Lazy::new(|| Mutex::new(Vec::new()));
+
+fn is_auth_bypass_mode() -> bool {
+    let auth_disabled = env::var("SYFTBOX_AUTH_ENABLED")
+        .map(|v| {
+            let v = v.trim().to_lowercase();
+            v == "0" || v == "false"
+        })
+        .unwrap_or(false);
+    // Treat devstack as bypass-capable when auth is disabled.
+    auth_disabled
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DevstackSyncHealth {
+    pub active: bool,
+    pub has_refresh_429_warning: bool,
+    pub refresh_429_count: u32,
+    pub tail_bytes_scanned: usize,
+    pub log_path: Option<String>,
+    pub checked_at: String,
+}
+
+fn read_file_tail(path: &Path, max_bytes: usize) -> Result<String, String> {
+    let mut file = fs::File::open(path).map_err(|e| format!("Failed to open log file: {}", e))?;
+    let len = file
+        .metadata()
+        .map_err(|e| format!("Failed to stat log file: {}", e))?
+        .len();
+    let read_len = std::cmp::min(len as usize, max_bytes);
+    if read_len == 0 {
+        return Ok(String::new());
+    }
+    file.seek(SeekFrom::End(-(read_len as i64)))
+        .map_err(|e| format!("Failed to seek log file: {}", e))?;
+    let mut buf = vec![0u8; read_len];
+    file.read_exact(&mut buf)
+        .map_err(|e| format!("Failed to read log file tail: {}", e))?;
+    Ok(String::from_utf8_lossy(&buf).to_string())
+}
+
+fn resolve_devstack_server_log_path(runtime_data_dir: &Path) -> Option<String> {
+    // Optional explicit override for debugging.
+    if let Ok(p) = env::var("BV_DEVSTACK_SERVER_LOG") {
+        let trimmed = p.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    // Typical devstack layout:
+    // <sandbox>/client1@sandbox.local
+    // <sandbox>/relay/state.json
+    let sandbox_root = runtime_data_dir.parent()?;
+    let state_path = sandbox_root.join("relay").join("state.json");
+    if state_path.exists() {
+        if let Ok(raw) = fs::read_to_string(&state_path) {
+            if let Ok(v) = serde_json::from_str::<Value>(&raw) {
+                if let Some(p) = v
+                    .get("server")
+                    .and_then(|s| s.get("log_path"))
+                    .and_then(|p| p.as_str())
+                {
+                    return Some(p.to_string());
+                }
+            }
+        }
+    }
+
+    let fallback = sandbox_root
+        .join("relay")
+        .join("server")
+        .join("logs")
+        .join("server.log");
+    Some(fallback.to_string_lossy().to_string())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ControlPlaneLogEntry {
@@ -118,13 +194,21 @@ fn ensure_syftbox_config(
         );
     }
 
+    // In auth-bypass/devstack mode, do not persist refresh tokens.
+    // Keeping a fake refresh token causes repeated /auth/refresh 429 loops.
+    let refresh_token_json = if is_auth_bypass_mode() {
+        String::new()
+    } else {
+        creds.refresh_token.clone().unwrap_or_default()
+    };
+
     let config_json = json!({
         "data_dir": runtime.data_dir.to_string_lossy(),
         "email": email,
         "server_url": server_url,
         "client_url": client_url,
         "client_token": client_token,
-        "refresh_token": creds.refresh_token.unwrap_or_default()
+        "refresh_token": refresh_token_json
     });
 
     if let Some(parent) = runtime.config_path.parent() {
@@ -1853,15 +1937,23 @@ pub async fn syftbox_request_otp(email: String, server_url: Option<String>) -> R
         return Ok(());
     }
 
-    match biovault::cli::commands::syftbox::request_otp(Some(email), None, server_url.clone()).await
-    {
+    let server_target = match server_url.as_deref().map(str::trim) {
+        Some("") | None => "default SyftBox server".to_string(),
+        Some(url) => url.to_string(),
+    };
+
+    match biovault::cli::commands::syftbox::request_otp(Some(email), None, server_url.clone()).await {
         Ok(_) => {}
         Err(err) => {
             crate::desktop_log!("❌ syftbox_request_otp error: {:?}", err);
-            return Err(format!(
-                "Failed to request OTP via {:?}: {}",
-                server_url, err
-            ));
+            let err_text = err.to_string();
+            if err_text.contains("429") || err_text.to_lowercase().contains("rate limit") {
+                return Err(format!(
+                    "Failed to request OTP via {}: {}. Too many attempts were detected by the server; please wait a minute and try again.",
+                    server_target, err_text
+                ));
+            }
+            return Err(format!("Failed to request OTP via {}: {}", server_target, err_text));
         }
     }
 
@@ -1882,6 +1974,11 @@ pub async fn syftbox_submit_otp(
             .map(|v| v == "0" || v.to_lowercase() == "false")
             .unwrap_or(false);
 
+    let server_target = match server_url.as_deref().map(str::trim) {
+        Some("") | None => "default SyftBox server".to_string(),
+        Some(url) => url.to_string(),
+    };
+
     if !skip_auth {
         match biovault::cli::commands::syftbox::submit_otp(
             &code,
@@ -1896,10 +1993,7 @@ pub async fn syftbox_submit_otp(
             Ok(_) => {}
             Err(err) => {
                 crate::desktop_log!("❌ syftbox_submit_otp error: {:?}", err);
-                return Err(format!(
-                    "Failed to verify OTP via {:?}: {}",
-                    server_url, err
-                ));
+                return Err(format!("Failed to verify OTP via {}: {}", server_target, err));
             }
         }
     } else {
@@ -2012,14 +2106,64 @@ pub fn check_syftbox_auth() -> Result<bool, String> {
     };
 
     // Check if syftbox_credentials exist and have required fields
+    let bypass_mode = is_auth_bypass_mode();
     let is_authenticated = if let Some(creds) = config.syftbox_credentials {
-        creds.access_token.is_some() && creds.refresh_token.is_some()
+        if bypass_mode {
+            creds.access_token.is_some()
+        } else {
+            creds.access_token.is_some() && creds.refresh_token.is_some()
+        }
     } else {
         false
     };
 
     crate::desktop_log!("  Authentication status: {}", is_authenticated);
     Ok(is_authenticated)
+}
+
+#[tauri::command]
+pub fn get_devstack_sync_health() -> Result<DevstackSyncHealth, String> {
+    let is_devstack =
+        env::var_os("BIOVAULT_DEV_SYFTBOX").is_some() || env::var_os("SYFTBOX_DATA_DIR").is_some();
+    let active = is_devstack && is_auth_bypass_mode();
+
+    if !active {
+        return Ok(DevstackSyncHealth {
+            active: false,
+            has_refresh_429_warning: false,
+            refresh_429_count: 0,
+            tail_bytes_scanned: 0,
+            log_path: None,
+            checked_at: Utc::now().to_rfc3339(),
+        });
+    }
+
+    let runtime = load_runtime_config()?;
+    let log_path = resolve_devstack_server_log_path(&runtime.data_dir);
+    let mut refresh_429_count: u32 = 0;
+    let mut tail_bytes_scanned: usize = 0;
+
+    if let Some(ref p) = log_path {
+        let path = Path::new(p);
+        if path.exists() {
+            if let Ok(tail) = read_file_tail(path, 512 * 1024) {
+                tail_bytes_scanned = tail.len();
+                refresh_429_count = tail
+                    .lines()
+                    .filter(|line| line.contains("/auth/refresh") && line.contains("429"))
+                    .count() as u32;
+            }
+        }
+    }
+
+    Ok(DevstackSyncHealth {
+        active: true,
+        has_refresh_429_warning: refresh_429_count > 0,
+        refresh_429_count,
+        tail_bytes_scanned,
+        log_path,
+        checked_at: Utc::now().to_rfc3339(),
+    })
 }
 
 #[tauri::command]
