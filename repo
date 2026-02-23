@@ -566,9 +566,19 @@ ensure_syqure_submodules() {
 
   echo -e "${CYAN}→ ${repo} submodules${NC}"
   git -C "$repo" submodule sync --recursive >/dev/null 2>&1 || true
-  if ! git -C "$repo" submodule update --init --recursive --depth 1; then
-    echo -e "${YELLOW}WARN: ${repo} shallow submodule update failed; retrying full depth${NC}"
-    if ! git -C "$repo" submodule update --init --recursive; then
+  git -C "$repo" config submodule.external/llvm-project.shallow true >/dev/null 2>&1 || true
+  git -C "$repo" config submodule.external/llvm-project.partialClone true >/dev/null 2>&1 || true
+  git -C "$repo" config submodule.external/llvm-project.partialCloneFilter blob:none >/dev/null 2>&1 || true
+
+  # Keep llvm-project shallow because it is large.
+  if ! git -C "$repo" submodule update --init --depth 1 --filter=blob:none -- external/llvm-project; then
+    echo -e "${RED}✗ ${repo} llvm-project shallow submodule update failed${NC}" >&2
+    return 1
+  fi
+
+  if ! git -C "$repo" submodule update --init --recursive --depth 1 -- codon sequre; then
+    echo -e "${YELLOW}WARN: ${repo} shallow codon/sequre update failed; retrying full depth${NC}"
+    if ! git -C "$repo" submodule update --init --recursive -- codon sequre; then
       echo -e "${RED}✗ ${repo} submodule update failed${NC}" >&2
       return 1
     fi

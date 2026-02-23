@@ -257,6 +257,7 @@ pub async fn execute_analysis(
     // Capture original environment for logging
     let original_path = env::var("PATH").unwrap_or_default();
     let original_java_home = env::var("JAVA_HOME").ok();
+    let original_java_cmd = env::var("JAVA_CMD").ok();
 
     let mut env_lines = vec![
         "=== Nextflow environment ===".to_string(),
@@ -276,6 +277,12 @@ pub async fn execute_analysis(
         format!(
             "  JAVA_HOME (original) = {}",
             original_java_home
+                .clone()
+                .unwrap_or_else(|| "<unset>".to_string())
+        ),
+        format!(
+            "  JAVA_CMD (original) = {}",
+            original_java_cmd
                 .clone()
                 .unwrap_or_else(|| "<unset>".to_string())
         ),
@@ -319,8 +326,12 @@ pub async fn execute_analysis(
     }
 
     let mut java_home_set = false;
+    let mut java_cmd_set = false;
     if let Some(java_bin) = resolve_binary_path(config.as_ref(), "java") {
         env_lines.push(format!("  java binary = {}", java_bin));
+        env::set_var("JAVA_CMD", &java_bin);
+        env_lines.push(format!("  JAVA_CMD set from java binary = {}", java_bin));
+        java_cmd_set = true;
         if let Some(java_home) = derive_java_home(&java_bin) {
             env::set_var("JAVA_HOME", &java_home);
             env_lines.push(format!(
@@ -345,6 +356,26 @@ pub async fn execute_analysis(
         }
     }
 
+    if !java_cmd_set {
+        match original_java_cmd.as_deref() {
+            Some(existing) => {
+                if std::path::Path::new(existing).exists() {
+                    env_lines.push(format!("  JAVA_CMD retained (pre-existing) = {}", existing));
+                } else {
+                    env::remove_var("JAVA_CMD");
+                    env_lines.push(format!(
+                        "  JAVA_CMD removed (pre-existing path missing) = {}",
+                        existing
+                    ));
+                }
+            }
+            None => {
+                env::remove_var("JAVA_CMD");
+                env_lines.push("  JAVA_CMD (effective) = <unset>".to_string());
+            }
+        }
+    }
+
     let nxf_home_path = biovault_home.join("data").join("nextflow");
     match fs::create_dir_all(&nxf_home_path) {
         Ok(_) => {
@@ -365,6 +396,10 @@ pub async fn execute_analysis(
     env_lines.push(format!(
         "  JAVA_HOME (effective) = {}",
         env::var("JAVA_HOME").unwrap_or_else(|_| "<unset>".to_string())
+    ));
+    env_lines.push(format!(
+        "  JAVA_CMD (effective) = {}",
+        env::var("JAVA_CMD").unwrap_or_else(|_| "<unset>".to_string())
     ));
     env_lines.push(format!(
         "  NXF_HOME (effective) = {}",
