@@ -27,6 +27,7 @@
 	let sending = $state(false)
 	let attaching = $state(false)
 	let composerDropActive = $state(false)
+	let scrollToBottomToken = $state(0)
 	let lastLoadedKey = $state('')
 	let lastReloadSignal = $state(-1)
 
@@ -49,6 +50,7 @@
 			await adapter.sendMessage(body)
 			draft = ''
 			await refreshMessages()
+			scrollToBottomToken += 1
 		} catch (e) {
 			toast.error('Failed to send message', { description: String(e) })
 		} finally {
@@ -168,6 +170,8 @@
 	onComposerDragOver={handleComposerDragOver}
 	onComposerDragLeave={handleComposerDragLeave}
 	onComposerDrop={handleComposerDrop}
+	isEventMessage={adapter.isEventMessage}
+	{scrollToBottomToken}
 >
 	{#snippet actions(msg)}
 		{@render actions?.(msg)}
@@ -175,11 +179,16 @@
 	{#snippet composerPrefix()}
 		<DropdownMenu.Root>
 			<DropdownMenu.Trigger>
-				<Button size="icon" variant="outline" disabled={!adapter.attachPaths || attaching}>
+				<Button
+					size="icon"
+					variant="ghost"
+					class="size-7 rounded-full"
+					disabled={!adapter.attachPaths || attaching}
+				>
 					{#if attaching}
-						<Loader2Icon class="size-4 animate-spin" />
+						<Loader2Icon class="size-3.5 animate-spin" />
 					{:else}
-						<PlusIcon class="size-4" />
+						<PlusIcon class="size-4 text-emerald-700" />
 					{/if}
 				</Button>
 			</DropdownMenu.Trigger>

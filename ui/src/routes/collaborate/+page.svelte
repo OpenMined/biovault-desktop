@@ -3,7 +3,7 @@
 	import { goto } from '$app/navigation'
 	import { onMount, onDestroy } from 'svelte'
 	import { syftboxAuthStore } from '$lib/stores/syftbox-auth.svelte'
-	import PageHeader from '$lib/components/page-header.svelte'
+	import { getAvatarToneClass } from '$lib/utils.js'
 	import SyftboxSignInDialog from '$lib/components/syftbox-sign-in-dialog.svelte'
 	import ConversationPanel from '$lib/components/conversation-panel.svelte'
 	import { buildSpaceConversationAdapter, type ConversationAdapter } from '$lib/collab/conversation-adapters'
@@ -17,9 +17,9 @@
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js'
 	import LogInIcon from '@lucide/svelte/icons/log-in'
 	import SearchIcon from '@lucide/svelte/icons/search'
-	import UsersIcon from '@lucide/svelte/icons/users'
 	import Loader2Icon from '@lucide/svelte/icons/loader-2'
 	import PlusIcon from '@lucide/svelte/icons/plus'
+	import PencilIcon from '@lucide/svelte/icons/pencil'
 	import LockIcon from '@lucide/svelte/icons/lock'
 	import FolderOpenIcon from '@lucide/svelte/icons/folder-open'
 	import CheckIcon from '@lucide/svelte/icons/check'
@@ -93,6 +93,10 @@
 	let createSpaceError = $state('')
 	let createSpaceSelected = $state<string[]>([])
 	let createSpaceConfirmAdd = $state(false)
+	let renameSpaceOpen = $state(false)
+	let renameSpaceName = $state('')
+	let renameSpaceLoading = $state(false)
+	let renameSpaceError = $state('')
 
 	let contacts = $state<Contact[]>([])
 	let discovered = $state<Contact[]>([])
@@ -125,10 +129,47 @@
 		return [...new Set(values.map((v) => v.toLowerCase()))].sort().join('|')
 	}
 
-	type SpaceMessageKind = 'message' | 'session_invite' | 'session_response' | 'flow_request' | 'flow_results'
+	function spaceDisplayName(
+		space: Pick<CollaborationSpace, 'name' | 'participants'> | null | undefined,
+	): string {
+		if (!space) return 'New Space'
+		const named = normalizeIdentity(space.name)
+		if (named) return named
+		const participants = space.participants
+			.map((p) => normalizeIdentity(p))
+			.filter((p): p is string => !!p)
+		if (participants.length > 0) return participants.join(', ')
+		return 'New Space'
+	}
+
+	function participantEmailArrayText(participants: string[]): string {
+		const safe = participants
+			.map((p) => normalizeIdentity(p))
+			.filter((p): p is string => !!p)
+		return safe.length > 0 ? `[${safe.join(', ')}]` : '[]'
+	}
+
+	function getSpaceAvatarTone(space: CollaborationSpace): string {
+		return getAvatarToneClass(`space:${space.space_id}`)
+	}
+
+	function spaceRecipients(space: CollaborationSpace): string[] {
+		return space.participants.filter(
+			(p) => normalizeIdentity(p)?.toLowerCase() !== currentUserEmail.toLowerCase(),
+		)
+	}
+
+	type SpaceMessageKind =
+		| 'message'
+		| 'space_event'
+		| 'session_invite'
+		| 'session_response'
+		| 'flow_request'
+		| 'flow_results'
 
 	function getMessageKind(msg: VaultMessage): SpaceMessageKind {
 		const meta = msg.metadata || {}
+		if (meta.space_event) return 'space_event'
 		if (meta.flow_request) return 'flow_request'
 		if (meta.flow_results) return 'flow_results'
 		if (meta.session_invite) return 'session_invite'
@@ -166,8 +207,16 @@
 		return fr && typeof fr === 'object' ? (fr as Record<string, unknown>) : null
 	}
 
-	function badgeForKind(kind: SpaceMessageKind): string {
+	function getSpaceEventMeta(msg: VaultMessage): Record<string, unknown> | null {
+		const meta = msg.metadata || {}
+		const ev = meta.space_event
+		return ev && typeof ev === 'object' ? (ev as Record<string, unknown>) : null
+	}
+
+	function badgeForKind(kind: SpaceMessageKind): string | null {
 		switch (kind) {
+			case 'space_event':
+				return null
 			case 'session_invite':
 				return 'Session Invite'
 			case 'session_response':
@@ -177,7 +226,7 @@
 			case 'flow_results':
 				return 'Flow Results'
 			default:
-				return 'Message'
+				return null
 		}
 	}
 
@@ -229,6 +278,12 @@
 			})
 			.sort((a, b) => (a.identity || '').localeCompare(b.identity || ''))
 	})
+	const contactCandidates = $derived(
+		spaceCandidates.filter((candidate) => candidate.source === 'contact'),
+	)
+	const discoveredCandidates = $derived(
+		spaceCandidates.filter((candidate) => candidate.source === 'discovered'),
+	)
 	const selectedDiscoveredCount = $derived.by(
 		() =>
 			createSpaceSelected.filter((id) => {
@@ -236,6 +291,11 @@
 				return safe ? !contactIdentitySet.has(safe.toLowerCase()) : false
 			}).length,
 	)
+	$effect(() => {
+		if (selectedDiscoveredCount === 0 && createSpaceConfirmAdd) {
+			createSpaceConfirmAdd = false
+		}
+	})
 	const selectedSpaceParticipantSet = $derived.by(() => {
 		const set = new Set<string>()
 		if (!selectedSpace) return set
@@ -274,6 +334,10 @@
 	function initials(identity: string): string {
 		if (!identity) return '?'
 		return identity.split('@')[0].slice(0, 2).toUpperCase()
+	}
+
+	function getIdentityAvatarTone(identity: string): string {
+		return getAvatarToneClass(identity)
 	}
 
 	function formatTime(value: string | null | undefined): string {
@@ -356,6 +420,9 @@
 
 	function selectSpace(space: CollaborationSpace) {
 		selectedSpace = space
+		renameSpaceOpen = false
+		renameSpaceName = ''
+		renameSpaceError = ''
 		spaceChatReloadSignal += 1
 	}
 
@@ -406,11 +473,16 @@
 			invoke,
 			spaceId: space.space_id,
 			threadId: space.thread_id,
-			spaceName: space.name,
+			spaceName: spaceDisplayName(space),
 			participants: space.participants,
 			currentUserEmail,
 			dedupeMessages: dedupeSpaceMessages,
 			kindLabel: (msg: VaultMessage) => badgeForKind(getMessageKind(msg)),
+			isEventMessage: (msg: VaultMessage) =>
+				getMessageKind(msg) === 'space_event' ||
+				msg.body.startsWith('Created space:') ||
+				msg.body.startsWith('Renamed space to:') ||
+				msg.body.startsWith('Created session:'),
 			onAfterSend: () => onAfterSpaceSend(space.space_id),
 			attachPaths: (paths: string[]) => attachPathsToSession(paths),
 		})
@@ -418,8 +490,70 @@
 
 	function openCreateSessionDialog() {
 		createSessionError = ''
-		createSessionName = selectedSpace ? `Session with ${selectedSpace.name}` : 'New session'
+		createSessionName = selectedSpace ? `Session with ${spaceDisplayName(selectedSpace)}` : 'New session'
 		createSessionDialogOpen = true
+	}
+
+	function startRenameSpace() {
+		if (!selectedSpace) return
+		renameSpaceOpen = true
+		renameSpaceError = ''
+		renameSpaceName = spaceDisplayName(selectedSpace)
+	}
+
+	function cancelRenameSpace() {
+		renameSpaceOpen = false
+		renameSpaceError = ''
+		renameSpaceName = ''
+	}
+
+	async function saveRenameSpace() {
+		if (!selectedSpace || renameSpaceLoading) return
+		const nextName = renameSpaceName.trim()
+		if (!nextName) {
+			renameSpaceError = 'Space name is required'
+			return
+		}
+		const currentName = spaceDisplayName(selectedSpace)
+		if (nextName === currentName) {
+			cancelRenameSpace()
+			return
+		}
+		const recipients = spaceRecipients(selectedSpace)
+		if (recipients.length < 1) {
+			renameSpaceError = 'This space has no recipients yet'
+			return
+		}
+
+		renameSpaceLoading = true
+		renameSpaceError = ''
+		try {
+			await invoke('send_message', {
+				request: {
+					recipients,
+					subject: nextName,
+					body: `Renamed space to: ${nextName}`,
+					metadata: {
+						space_event: {
+							type: 'renamed',
+							name: nextName,
+						},
+						group_chat: {
+							name: nextName,
+						},
+					},
+				},
+			})
+			await loadSidebar(true)
+			const refreshed = spaces.find((s) => s.space_id === selectedSpace?.space_id)
+			if (refreshed) selectedSpace = refreshed
+			cancelRenameSpace()
+			toast.success('Space renamed')
+		} catch (e) {
+			renameSpaceError = String(e)
+		} finally {
+			renameSpaceLoading = false
+		}
 	}
 
 	async function createSessionFromContext() {
@@ -435,9 +569,36 @@
 			const created = await invoke<Session>('create_session', {
 				request: { name, peer },
 			})
+			if (selectedSpace && created?.session_id) {
+				const recipients = spaceRecipients(selectedSpace)
+				if (recipients.length > 0) {
+					await invoke('send_message', {
+						request: {
+							recipients,
+							subject: spaceDisplayName(selectedSpace),
+							body: `Created session: ${name}`,
+							metadata: {
+								space_event: {
+									type: 'session_created',
+									session_id: created.session_id,
+									session_name: name,
+								},
+								group_chat: {
+									name: spaceDisplayName(selectedSpace),
+									participants: selectedSpace.participants,
+								},
+							},
+						},
+					})
+				}
+			}
 			createSessionDialogOpen = false
+			await loadSidebar(true)
 			await loadSessions()
-			if (created?.session_id) navigateToSessionWorkspace(created.session_id, 'overview')
+			spaceChatReloadSignal += 1
+			if (!selectedSpace && created?.session_id) {
+				navigateToSessionWorkspace(created.session_id, 'overview')
+			}
 		} catch (e) {
 			createSessionError = String(e)
 		} finally {
@@ -515,13 +676,22 @@
 			}
 
 			const spaceLabel = createSpaceName.trim() || 'New Space'
-			await invoke('send_message', {
-				request: {
-					recipients: createSpaceSelected,
-					subject: spaceLabel,
-					body: `Created space: ${spaceLabel}`,
-				},
-			})
+				await invoke('send_message', {
+					request: {
+						recipients: createSpaceSelected,
+						subject: spaceLabel,
+						body: `Created space: ${spaceLabel}`,
+						metadata: {
+							space_event: {
+								type: 'created',
+								name: spaceLabel,
+							},
+							group_chat: {
+								name: spaceLabel,
+							},
+						},
+					},
+				})
 			createSpaceDialogOpen = false
 			await loadSidebar(true)
 			const created = spaces.find((s) => participantSignature(s.participants) === desiredSig)
@@ -650,15 +820,6 @@
 </script>
 
 <div class="flex h-full flex-col bg-[radial-gradient(1200px_600px_at_0%_-10%,hsl(var(--muted))_0%,transparent_55%)]">
-	<PageHeader title="Spaces" description="Collaborate with your team in shared spaces.">
-		{#if isAuthenticated}
-			<Button size="sm" onclick={openCreateSpaceDialog}>
-				<PlusIcon class="size-4" />
-				Create Space
-			</Button>
-		{/if}
-	</PageHeader>
-
 	{#if loading || isCheckingAuth}
 		<div class="flex h-full items-center justify-center">
 			<Loader2Icon class="size-8 animate-spin text-muted-foreground" />
@@ -684,19 +845,31 @@
 			</Empty.Root>
 		</div>
 	{:else}
-		<div class="flex min-h-0 flex-1 gap-4 overflow-hidden p-4">
-			<div class="flex w-80 shrink-0 flex-col overflow-hidden rounded-2xl border bg-background/95 shadow-sm backdrop-blur">
-				<div class="shrink-0 border-b bg-muted/20 px-4 py-3">
-					<div class="flex items-center gap-2 text-sm font-medium">
-						<UsersIcon class="size-4 text-muted-foreground" />
-						Spaces
+		<div class="flex min-h-0 flex-1 overflow-hidden">
+			<div class="flex w-80 shrink-0 flex-col overflow-hidden rounded-r-2xl bg-background/90 shadow-[0_10px_30px_-18px_hsl(var(--foreground)/0.35)] ring-1 ring-border/40 backdrop-blur">
+				<div class="shrink-0 border-b bg-background/70 px-4 py-2 backdrop-blur">
+					<div class="flex h-11 items-center justify-between gap-2">
+						<div>
+							<h1 class="text-base font-semibold">Spaces</h1>
+							<p class="text-xs text-muted-foreground">Collaborate with others</p>
+						</div>
+						<Button
+							size="icon"
+							variant="secondary"
+							class="h-11 w-11 shrink-0 rounded-lg"
+							onclick={openCreateSpaceDialog}
+							aria-label="Create space"
+						>
+							<PlusIcon class="size-4" />
+						</Button>
 					</div>
 				</div>
-
-				<div class="shrink-0 border-b p-3.5">
-					<div class="relative">
-						<SearchIcon class="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-						<Input placeholder="Search spaces..." bind:value={listSearch} class="h-10 pl-9" />
+				<div class="shrink-0 px-3 pb-2 pt-2">
+					<div class="flex items-center gap-2">
+						<div class="relative min-w-0 flex-1">
+							<SearchIcon class="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+							<Input placeholder="Search spaces..." bind:value={listSearch} class="h-10 pl-9" />
+						</div>
 					</div>
 				</div>
 
@@ -709,27 +882,29 @@
 						</div>
 					{:else}
 						{#each filteredSpaces as space (space.space_id)}
-							<button
-								type="button"
-								onclick={() => selectSpace(space)}
-								class="mb-1 w-full rounded-xl border p-3 text-left transition-colors hover:bg-muted/50 {selectedSpace?.space_id ===
-								space.space_id
-									? 'border-primary/40 bg-primary/10'
-									: ''}"
-							>
-								<div class="flex items-center gap-3">
-									<Avatar.Root class="size-9 shrink-0">
-										<Avatar.Fallback class="text-xs">{initials(space.name || 'SP')}</Avatar.Fallback>
-									</Avatar.Root>
-									<div class="min-w-0 flex-1">
-										<p class="truncate text-sm font-medium">{space.name}</p>
-										<p class="truncate text-xs text-muted-foreground">
-											{space.member_count} members • {space.last_message_preview}
-										</p>
+								<button
+									type="button"
+									onclick={() => selectSpace(space)}
+								class="mb-1.5 w-full rounded-xl bg-background/70 px-3 py-2.5 text-left transition-[background,box-shadow] hover:bg-muted/45 {selectedSpace?.space_id ===
+									space.space_id
+										? 'bg-primary/[0.08] shadow-sm ring-1 ring-primary/25'
+										: 'ring-1 ring-transparent'}"
+								>
+									<div class="flex items-center gap-3">
+										<Avatar.Root class="size-9 shrink-0">
+											<Avatar.Fallback class={`text-xs ${getSpaceAvatarTone(space)}`}
+												>{initials(spaceDisplayName(space) || 'SP')}</Avatar.Fallback
+											>
+										</Avatar.Root>
+										<div class="min-w-0 flex-1">
+											<p class="truncate text-sm font-medium">{spaceDisplayName(space)}</p>
+											<p class="truncate text-xs text-muted-foreground">
+												{space.member_count} members • {space.last_message_preview}
+											</p>
+										</div>
+										<span class="text-xs text-muted-foreground">{formatTime(space.last_activity_at)}</span>
 									</div>
-									<span class="text-xs text-muted-foreground">{formatTime(space.last_activity_at)}</span>
-								</div>
-							</button>
+								</button>
 						{:else}
 							<div class="p-6 text-center text-sm text-muted-foreground">
 								No spaces found
@@ -739,19 +914,75 @@
 				</div>
 			</div>
 
-			<div class="min-h-0 flex flex-1 flex-col overflow-hidden rounded-2xl border bg-background/95 shadow-sm backdrop-blur">
-				{#if selectedSpace}
-					<div class="shrink-0 border-b px-5 py-4">
-						<div class="flex items-center justify-between gap-3">
-							<div class="min-w-0">
-								<h2 class="truncate text-base font-semibold">{selectedSpace.name}</h2>
-								<p class="text-sm text-muted-foreground">{selectedSpace.member_count} members</p>
-							</div>
-							<div class="flex items-center gap-2">
+				<div class="w-px shrink-0 self-stretch bg-border/60"></div>
+				<div class="min-h-0 flex flex-1 flex-col overflow-hidden">
+					{#if selectedSpace}
+						<div class="shrink-0 border-b bg-background/70 px-4 py-2 backdrop-blur">
+							<div class="flex h-11 items-center justify-between gap-3">
+								<div class="min-w-0 flex-1">
+									{#if renameSpaceOpen}
+										<div class="space-y-1">
+											<div class="flex items-center gap-2">
+												<Input
+													class="h-8 max-w-sm"
+													placeholder="Space name"
+													bind:value={renameSpaceName}
+													onkeydown={(e) => {
+														if (e.key === 'Enter') {
+															e.preventDefault()
+															void saveRenameSpace()
+														}
+														if (e.key === 'Escape') {
+															e.preventDefault()
+															cancelRenameSpace()
+														}
+													}}
+												/>
+												<Button
+													size="sm"
+													variant="secondary"
+													disabled={renameSpaceLoading || !renameSpaceName.trim()}
+													onclick={saveRenameSpace}
+												>
+													{#if renameSpaceLoading}
+														<Loader2Icon class="size-4 animate-spin" />
+													{:else}
+														Save
+													{/if}
+												</Button>
+												<Button size="sm" variant="ghost" onclick={cancelRenameSpace}>
+													Cancel
+												</Button>
+											</div>
+											{#if renameSpaceError}
+												<p class="text-xs text-destructive">{renameSpaceError}</p>
+											{/if}
+										</div>
+									{:else}
+										<div class="flex min-w-0 flex-col justify-center">
+											<div class="flex min-w-0 items-center gap-2">
+												<h2 class="truncate text-base font-semibold">{spaceDisplayName(selectedSpace)}</h2>
+												<Button
+													size="icon"
+													variant="ghost"
+													class="size-7"
+													onclick={startRenameSpace}
+													aria-label="Rename space"
+												>
+													<PencilIcon class="size-4" />
+												</Button>
+											</div>
+											<p class="truncate text-xs text-muted-foreground">
+												{selectedSpace.member_count} members • {participantEmailArrayText(selectedSpace.participants)}
+											</p>
+										</div>
+									{/if}
+								</div>
+								<div class="shrink-0 flex items-center gap-2">
 								{#if selectedSpaceSessions.length > 0}
 									<DropdownMenu.Root>
 										<DropdownMenu.Trigger>
-											<Button size="sm" variant="outline">
+											<Button size="sm" variant="secondary">
 												<MessageSquareIcon class="size-4" />
 												Sessions ({selectedSpaceSessions.length})
 											</Button>
@@ -770,7 +1001,7 @@
 										</DropdownMenu.Content>
 									</DropdownMenu.Root>
 								{/if}
-								<Button size="sm" variant="outline" onclick={openCreateSessionDialog}>
+								<Button size="sm" variant="secondary" onclick={openCreateSessionDialog}>
 									<LockIcon class="size-4" />
 									Start Session
 								</Button>
@@ -778,99 +1009,120 @@
 						</div>
 					</div>
 
-					<ConversationPanel
-						adapter={spaceConversationAdapter(selectedSpace)}
-						reloadSignal={spaceChatReloadSignal}
-					>
-						{#snippet actions(msg)}
-							{@const typed = msg as VaultMessage}
-							{@const kind = getMessageKind(typed)}
-							{#if kind === 'session_invite'}
-								{@const sessionId = getSessionInviteId(typed)}
-								{#if sessionId}
+					<div class="min-h-0 flex-1">
+						<ConversationPanel
+							adapter={spaceConversationAdapter(selectedSpace)}
+							reloadSignal={spaceChatReloadSignal}
+						>
+							{#snippet actions(msg)}
+								{@const typed = msg as VaultMessage}
+								{@const kind = getMessageKind(typed)}
+								{#if kind === 'session_invite'}
+									{@const sessionId = getSessionInviteId(typed)}
+									{#if sessionId}
+										<div class="mt-2 flex gap-2">
+											<Button
+												size="sm"
+												class="h-7 text-xs"
+												disabled={eventActionLoading[typed.id]}
+												onclick={() => acceptSessionFromMessage(typed)}
+											>
+												Accept
+											</Button>
+											<Button
+												variant="outline"
+												size="sm"
+												class="h-7 text-xs"
+												disabled={eventActionLoading[typed.id]}
+												onclick={() => declineSessionFromMessage(typed)}
+											>
+												Decline
+											</Button>
+											<Button
+												variant="outline"
+												size="sm"
+												class="h-7 text-xs"
+												onclick={() => navigateToSessionWorkspace(sessionId, 'overview')}
+											>
+												Workspace
+											</Button>
+										</div>
+									{/if}
+								{/if}
+								{#if kind === 'flow_request'}
 									<div class="mt-2 flex gap-2">
 										<Button
 											size="sm"
+											variant="outline"
 											class="h-7 text-xs"
 											disabled={eventActionLoading[typed.id]}
-											onclick={() => acceptSessionFromMessage(typed)}
+											onclick={() => importFlowFromMessage(typed)}
 										>
-											Accept
-										</Button>
-										<Button
-											variant="outline"
-											size="sm"
-											class="h-7 text-xs"
-											disabled={eventActionLoading[typed.id]}
-											onclick={() => declineSessionFromMessage(typed)}
-										>
-											Decline
-										</Button>
-										<Button
-											variant="outline"
-											size="sm"
-											class="h-7 text-xs"
-											onclick={() => navigateToSessionWorkspace(sessionId, 'overview')}
-										>
-											Workspace
+											Import Flow
 										</Button>
 									</div>
 								{/if}
-							{/if}
-							{#if kind === 'flow_request'}
-								<div class="mt-2 flex gap-2">
-									<Button
-										size="sm"
-										variant="outline"
-										class="h-7 text-xs"
-										disabled={eventActionLoading[typed.id]}
-										onclick={() => importFlowFromMessage(typed)}
-									>
-										Import Flow
-									</Button>
-								</div>
-							{/if}
-							{#if kind === 'flow_results'}
-								<div class="mt-2 flex gap-2">
-									<Button
-										size="sm"
-										variant="outline"
-										class="h-7 text-xs"
-										disabled={eventActionLoading[typed.id]}
-										onclick={() => importFlowResultsFromMessage(typed)}
-									>
-										Import Results
-									</Button>
-								</div>
-							{/if}
-							{#if kind === 'session_response'}
-								{@const responseSessionId = getSessionResponseId(typed)}
-								{#if responseSessionId}
+								{#if kind === 'flow_results'}
 									<div class="mt-2 flex gap-2">
 										<Button
 											size="sm"
 											variant="outline"
 											class="h-7 text-xs"
-											onclick={() => navigateToSessionWorkspace(responseSessionId, 'overview')}
-										>
-											Workspace
-										</Button>
-										<Button
-											size="sm"
-											variant="outline"
-											class="h-7 text-xs"
 											disabled={eventActionLoading[typed.id]}
-											onclick={() => openSessionFromMessage(typed)}
+											onclick={() => importFlowResultsFromMessage(typed)}
 										>
-											Open Folder
+											Import Results
 										</Button>
 									</div>
+								{/if}
+							{#if kind === 'session_response'}
+								{@const responseSessionId = getSessionResponseId(typed)}
+								{#if responseSessionId}
+										<div class="mt-2 flex gap-2">
+											<Button
+												size="sm"
+												variant="outline"
+												class="h-7 text-xs"
+												onclick={() => navigateToSessionWorkspace(responseSessionId, 'overview')}
+											>
+												Workspace
+											</Button>
+											<Button
+												size="sm"
+												variant="outline"
+												class="h-7 text-xs"
+												disabled={eventActionLoading[typed.id]}
+												onclick={() => openSessionFromMessage(typed)}
+											>
+												Open Folder
+											</Button>
+									</div>
+								{/if}
+							{/if}
+							{#if kind === 'space_event'}
+								{@const spaceEvent = getSpaceEventMeta(typed)}
+								{@const eventType = typeof spaceEvent?.type === 'string' ? spaceEvent.type : null}
+								{#if eventType === 'session_created'}
+									{@const eventSessionId =
+										typeof spaceEvent?.session_id === 'string' ? spaceEvent.session_id : null}
+									{@const eventSessionName =
+										typeof spaceEvent?.session_name === 'string' ? spaceEvent.session_name : 'session'}
+									{#if eventSessionId}
+										<button
+											type="button"
+											class="underline underline-offset-2 hover:no-underline text-emerald-900/90"
+											onclick={() => navigateToSessionWorkspace(eventSessionId, 'overview')}
+										>
+											{eventSessionName}
+										</button>
+									{/if}
 								{/if}
 							{/if}
 						{/snippet}
 					</ConversationPanel>
+				</div>
 				{:else}
-					<div class="flex h-full items-center justify-center px-6 text-sm text-muted-foreground">
+					<div class="min-h-0 flex flex-1 items-center justify-center px-6 text-sm text-muted-foreground">
 						Choose a space from the left, or create one.
 					</div>
 				{/if}
@@ -885,7 +1137,7 @@
 				<Dialog.Title>Start Session</Dialog.Title>
 				<Dialog.Description>
 					{selectedSpace
-						? `Create a session from ${selectedSpace.name}.`
+						? `Create a session from ${spaceDisplayName(selectedSpace)}.`
 						: 'Create a new collaboration session.'}
 				</Dialog.Description>
 			</Dialog.Header>
@@ -898,7 +1150,7 @@
 			</div>
 
 			<Dialog.Footer>
-				<Dialog.Close class="inline-flex h-9 items-center justify-center rounded-md border px-3 text-sm">
+				<Dialog.Close class="inline-flex h-9 items-center justify-center rounded-md bg-muted/60 px-3 text-sm hover:bg-muted">
 					Cancel
 				</Dialog.Close>
 				<Button onclick={createSessionFromContext} disabled={createSessionLoading || !createSessionName.trim()}>
@@ -927,48 +1179,107 @@
 				{#if createSpaceError}
 					<p class="text-sm text-destructive">{createSpaceError}</p>
 				{/if}
-				<div class="max-h-72 overflow-auto rounded-md border">
+				<div class="max-h-72 overflow-auto rounded-lg bg-muted/20 p-1">
 					{#if createSpaceLoading}
 						<div class="p-4 text-sm text-muted-foreground">Loading contacts...</div>
 					{:else if spaceCandidates.length === 0}
 						<div class="p-4 text-sm text-muted-foreground">No contacts available</div>
 					{:else}
-						{#each spaceCandidates as contact (contact.identity)}
-							{@const selected = createSpaceSelected.includes(contact.identity)}
-							<button
-								type="button"
-								class="flex w-full items-center justify-between border-b p-3 text-left last:border-b-0 hover:bg-muted/50"
-								onclick={() => toggleSpaceContact(contact.identity)}
-							>
-								<div class="min-w-0">
-									<p class="truncate text-sm font-medium">{contact.identity}</p>
-									<p class="text-xs text-muted-foreground">
-										{contact.source === 'contact' ? 'Contact' : 'Discovered'}
-									</p>
-								</div>
-								<div class="flex items-center gap-2">
-									{#if contact.source === 'discovered'}
-										<Badge variant="outline" class="text-[10px]">New</Badge>
-									{/if}
-									{#if selected}
-										<CheckIcon class="size-4 text-primary" />
-									{/if}
-								</div>
-							</button>
-						{/each}
+						{#if contactCandidates.length > 0}
+							<div class="sticky top-0 z-10 mb-1 flex items-center justify-between rounded-md bg-muted/70 px-2 py-1 text-[11px] font-medium text-muted-foreground backdrop-blur">
+								<span>Contacts</span>
+								<Badge variant="secondary" class="h-5 px-1.5 text-[10px]">
+									{contactCandidates.length}
+								</Badge>
+							</div>
+							{#each contactCandidates as contact (contact.identity)}
+								{@const selected = createSpaceSelected.includes(contact.identity)}
+								<button
+									type="button"
+									class="mb-1 flex w-full items-center justify-between rounded-md p-3 text-left hover:bg-background/80"
+									onclick={() => toggleSpaceContact(contact.identity)}
+								>
+									<div class="min-w-0 flex items-center gap-3">
+										<Avatar.Root class="size-8 shrink-0">
+											<Avatar.Fallback class={`text-xs ${getIdentityAvatarTone(contact.identity)}`}
+												>{initials(contact.identity)}</Avatar.Fallback
+											>
+										</Avatar.Root>
+										<div class="min-w-0">
+											<p class="truncate text-sm font-medium">{contact.identity}</p>
+											<p class="text-xs text-muted-foreground">Trusted contact</p>
+										</div>
+									</div>
+									<div class="flex items-center gap-2">
+										<Badge variant="secondary" class="text-[10px]">Contact</Badge>
+										<span class="inline-flex size-4 items-center justify-center">
+											<CheckIcon
+												class="size-4 transition-opacity {selected ? 'text-primary opacity-100' : 'opacity-0'}"
+											/>
+										</span>
+									</div>
+								</button>
+							{/each}
+						{/if}
+
+						{#if discoveredCandidates.length > 0}
+							<div class="sticky top-0 z-10 mb-1 mt-2 flex items-center justify-between rounded-md bg-amber-50/80 px-2 py-1 text-[11px] font-medium text-amber-800 backdrop-blur">
+								<span>Discovered on network</span>
+								<Badge variant="outline" class="h-5 border-amber-300 px-1.5 text-[10px] text-amber-800">
+									{discoveredCandidates.length}
+								</Badge>
+							</div>
+							{#each discoveredCandidates as contact (contact.identity)}
+								{@const selected = createSpaceSelected.includes(contact.identity)}
+								<button
+									type="button"
+									class="mb-1 flex w-full items-center justify-between rounded-md border border-amber-200/60 bg-amber-50/30 p-3 text-left hover:bg-amber-50/60"
+									onclick={() => toggleSpaceContact(contact.identity)}
+								>
+									<div class="min-w-0 flex items-center gap-3">
+										<Avatar.Root class="size-8 shrink-0">
+											<Avatar.Fallback class={`text-xs ${getIdentityAvatarTone(contact.identity)}`}
+												>{initials(contact.identity)}</Avatar.Fallback
+											>
+										</Avatar.Root>
+										<div class="min-w-0">
+											<p class="truncate text-sm font-medium">{contact.identity}</p>
+											<p class="text-xs text-amber-800/80">Not in contacts yet</p>
+										</div>
+									</div>
+									<div class="flex items-center gap-2">
+										<Badge variant="outline" class="border-amber-300 text-[10px] text-amber-800">Discovered</Badge>
+										<span class="inline-flex size-4 items-center justify-center">
+											<CheckIcon
+												class="size-4 transition-opacity {selected ? 'text-primary opacity-100' : 'opacity-0'}"
+											/>
+										</span>
+									</div>
+								</button>
+							{/each}
+						{/if}
 					{/if}
 				</div>
 				{#if selectedDiscoveredCount > 0}
-					<label class="flex items-start gap-2 rounded-md border p-2 text-xs text-muted-foreground">
-						<input
-							type="checkbox"
-							class="mt-0.5"
-							bind:checked={createSpaceConfirmAdd}
-						/>
-						<span>
-							Add {selectedDiscoveredCount} selected discovered {selectedDiscoveredCount === 1 ? 'contact' : 'contacts'} before creating this space.
-						</span>
-					</label>
+					<div class="min-h-20 rounded-md border border-amber-300/70 bg-amber-50/50 p-3">
+						<label class="flex items-start gap-3">
+							<input
+								type="checkbox"
+								class="mt-1 size-4"
+								bind:checked={createSpaceConfirmAdd}
+							/>
+							<span class="space-y-0.5">
+								<span class="block text-sm font-medium">
+									Add selected discovered users to Contacts
+								</span>
+								<span class="block text-sm text-muted-foreground">
+									If checked, {selectedDiscoveredCount} selected discovered {selectedDiscoveredCount === 1
+										? 'user will be added'
+										: 'users will be added'} to your Contacts before this space is created.
+								</span>
+							</span>
+						</label>
+					</div>
 				{/if}
 				<p class="text-xs text-muted-foreground">
 					Selected: {createSpaceSelected.length}
@@ -976,7 +1287,7 @@
 			</div>
 
 			<Dialog.Footer>
-				<Dialog.Close class="inline-flex h-9 items-center justify-center rounded-md border px-3 text-sm">
+				<Dialog.Close class="inline-flex h-9 items-center justify-center rounded-md bg-muted/60 px-3 text-sm hover:bg-muted">
 					Cancel
 				</Dialog.Close>
 				<Button onclick={createSpaceFromDialog} disabled={createSpaceLoading}>

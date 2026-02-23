@@ -11,13 +11,15 @@
 </script>
 
 {#if exists}
-	<span class="truncate">{filename}</span>
+	<div class="min-w-0 max-w-full">
+		<span class="block truncate" title={filename}>{filename}</span>
+	</div>
 {:else}
 	<Tooltip.Provider delayDuration={0}>
 		<Tooltip.Root>
-			<Tooltip.Trigger class="flex items-center gap-1.5 text-destructive">
+			<Tooltip.Trigger class="flex min-w-0 max-w-full items-center gap-1.5 text-destructive">
 				<AlertTriangleIcon class="size-4 shrink-0" />
-				<span class="truncate">{filename}</span>
+				<span class="block min-w-0 truncate" title={filename}>{filename}</span>
 			</Tooltip.Trigger>
 			<Tooltip.Content>
 				<p class="text-xs">File not found</p>

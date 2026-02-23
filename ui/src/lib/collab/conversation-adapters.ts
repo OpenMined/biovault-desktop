@@ -16,6 +16,7 @@ export interface ConversationAdapter<TMessage extends ChatMessageBase = ChatMess
 	sendMessage: (body: string) => Promise<void>
 	attachPaths?: (paths: string[]) => Promise<void>
 	kindLabel?: ((msg: TMessage) => string | null | undefined) | null
+	isEventMessage?: ((msg: TMessage) => boolean) | null
 }
 
 type InvokeFn = <T>(cmd: string, args?: InvokeArgs) => Promise<T>
@@ -29,6 +30,7 @@ export function buildSpaceConversationAdapter<TMessage extends ChatMessageBase>(
 	currentUserEmail: string
 	dedupeMessages: (messages: TMessage[]) => TMessage[]
 	kindLabel: (msg: TMessage) => string | null | undefined
+	isEventMessage?: ((msg: TMessage) => boolean) | null
 	onAfterSend?: () => Promise<void> | void
 	attachPaths?: (paths: string[]) => Promise<void>
 }): ConversationAdapter<TMessage> {
@@ -62,6 +64,7 @@ export function buildSpaceConversationAdapter<TMessage extends ChatMessageBase>(
 		},
 		attachPaths: params.attachPaths,
 		kindLabel: params.kindLabel,
+		isEventMessage: params.isEventMessage ?? null,
 	}
 }
 

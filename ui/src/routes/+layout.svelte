@@ -12,6 +12,7 @@
 	import AppSidebar from '$lib/components/app-sidebar.svelte'
 	import SqlPanel from '$lib/components/sql-panel.svelte'
 	import LogsPanel from '$lib/components/logs-panel.svelte'
+	import MailDebugPanel from '$lib/components/mail-debug-panel.svelte'
 	import NotificationsSheet from '$lib/components/notifications-sheet.svelte'
 	import LearnSheet from '$lib/components/learn-sheet.svelte'
 	import SupportDialog from '$lib/components/support-dialog.svelte'
@@ -20,11 +21,18 @@
 	import ProfileSwitcherDialog from '$lib/components/profile-switcher-dialog.svelte'
 	// import AiAssistant from '$lib/components/ai-assistant.svelte'
 	import DependenciesStatus from '$lib/components/dependencies-status.svelte'
-	import { addNotification, notificationsStore } from '$lib/stores/notifications.svelte'
+	import {
+		addNotification,
+		notificationsStore,
+		syncNotificationsProfileScope,
+	} from '$lib/stores/notifications.svelte'
 	import { profilesStore } from '$lib/stores/profiles.svelte'
 	import SquareTerminalIcon from '@lucide/svelte/icons/square-terminal'
 	import DatabaseIcon from '@lucide/svelte/icons/database'
 	import FolderSyncIcon from '@lucide/svelte/icons/folder-sync'
+	import MailIcon from '@lucide/svelte/icons/mail'
+	import ChevronLeftIcon from '@lucide/svelte/icons/chevron-left'
+	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right'
 	import LibraryBigIcon from '@lucide/svelte/icons/library-big'
 	import BellIcon from '@lucide/svelte/icons/bell'
 	import CircleHelpIcon from '@lucide/svelte/icons/circle-help'
@@ -34,6 +42,8 @@
 	let sqlOpen = $state(false)
 	let logsOpen = $state(false)
 	let syftboxOpen = $state(false)
+	let mailDebugOpen = $state(false)
+	let devToolsOpen = $state(false)
 	let notificationsOpen = $state(false)
 	let learnOpen = $state(false)
 	let supportOpen = $state(false)
@@ -41,6 +51,8 @@
 	let appVersion = $state('')
 	let profileSwitcherOpen = $state(false)
 	let profileGuardLoading = $state(true)
+	const headerIconButtonClass =
+		'text-primary-foreground/80 hover:text-primary-foreground flex size-9 items-center justify-center rounded-md transition-colors'
 	const requiresProfileSelection = $derived(
 		!profileGuardLoading &&
 			profilesStore.enabled &&
@@ -79,6 +91,7 @@
 		;(async () => {
 			try {
 				await profilesStore.load()
+				syncNotificationsProfileScope(profilesStore.currentProfileId)
 			} finally {
 				profileGuardLoading = false
 				if (profilesStore.enabled && !profilesStore.currentProfileId) {
@@ -116,6 +129,11 @@
 			unlistenPromise.then((unlisten) => unlisten())
 		}
 	})
+
+	$effect(() => {
+		if (profileGuardLoading) return
+		syncNotificationsProfileScope(profilesStore.currentProfileId)
+	})
 </script>
 
 <Sidebar.Provider class="!min-h-0">
@@ -134,86 +152,137 @@
 			</div>
 			<Tooltip.Provider delayDuration={0}>
 				<div class="flex items-center gap-1">
+					<div class="flex items-center gap-1">
+						<Tooltip.Root>
+							<Tooltip.Trigger
+								class="{headerIconButtonClass} {devToolsOpen
+									? 'bg-primary-foreground/10'
+									: ''}"
+								onclick={() => (devToolsOpen = !devToolsOpen)}
+							>
+								{#if devToolsOpen}
+									<ChevronRightIcon class="size-5" />
+								{:else}
+									<ChevronLeftIcon class="size-5" />
+								{/if}
+							</Tooltip.Trigger>
+							<Tooltip.Content>
+								<p>{devToolsOpen ? 'Hide Dev Tools' : 'Show Dev Tools'}</p>
+							</Tooltip.Content>
+						</Tooltip.Root>
+
+						<div
+							class="flex items-center gap-1 overflow-hidden transition-all duration-300 ease-out {devToolsOpen
+								? 'max-w-96 opacity-100 translate-x-0'
+								: 'max-w-0 opacity-0 translate-x-3 pointer-events-none'}"
+						>
+							<Drawer.Root bind:open={logsOpen}>
+								<Tooltip.Root>
+									<Drawer.Trigger>
+										{#snippet child({ props })}
+											<Tooltip.Trigger
+												{...props}
+												class={headerIconButtonClass}
+											>
+												<SquareTerminalIcon class="size-5" />
+											</Tooltip.Trigger>
+										{/snippet}
+									</Drawer.Trigger>
+									<Tooltip.Content>
+										<p>Logs</p>
+									</Tooltip.Content>
+								</Tooltip.Root>
+								<Drawer.Content class="!max-h-[calc(100vh-40px)] h-[calc(100vh-40px)] !rounded-t-xl">
+									<div class="h-full px-6 pb-8 pt-4">
+										{#if logsOpen}
+											<LogsPanel mode="sheet" />
+										{/if}
+									</div>
+								</Drawer.Content>
+							</Drawer.Root>
+
+							<Drawer.Root bind:open={sqlOpen}>
+								<Tooltip.Root>
+									<Drawer.Trigger>
+										{#snippet child({ props })}
+											<Tooltip.Trigger
+												{...props}
+												class={headerIconButtonClass}
+											>
+												<DatabaseIcon class="size-5" />
+											</Tooltip.Trigger>
+										{/snippet}
+									</Drawer.Trigger>
+									<Tooltip.Content>
+										<p>SQL Console</p>
+									</Tooltip.Content>
+								</Tooltip.Root>
+								<Drawer.Content class="!max-h-[calc(100vh-40px)] h-[calc(100vh-40px)] !rounded-t-xl">
+									<div class="h-full px-6 pb-8 pt-4">
+										{#if sqlOpen}
+											<SqlPanel mode="sheet" />
+										{/if}
+									</div>
+								</Drawer.Content>
+							</Drawer.Root>
+
+							<Drawer.Root bind:open={mailDebugOpen}>
+								<Tooltip.Root>
+									<Drawer.Trigger>
+										{#snippet child({ props })}
+											<Tooltip.Trigger
+												{...props}
+												class={headerIconButtonClass}
+											>
+												<MailIcon class="size-5" />
+											</Tooltip.Trigger>
+										{/snippet}
+									</Drawer.Trigger>
+									<Tooltip.Content>
+										<p>Mail Debug</p>
+									</Tooltip.Content>
+								</Tooltip.Root>
+								<Drawer.Content class="!max-h-[calc(100vh-40px)] h-[calc(100vh-40px)] !rounded-t-xl">
+									<div class="h-full px-6 pb-8 pt-4">
+										{#if mailDebugOpen}
+											<MailDebugPanel />
+										{/if}
+									</div>
+								</Drawer.Content>
+							</Drawer.Root>
+
+							<Drawer.Root bind:open={syftboxOpen}>
+								<Tooltip.Root>
+									<Drawer.Trigger>
+										{#snippet child({ props })}
+											<Tooltip.Trigger
+												{...props}
+												class={headerIconButtonClass}
+											>
+												<FolderSyncIcon class="size-5" />
+											</Tooltip.Trigger>
+										{/snippet}
+									</Drawer.Trigger>
+									<Tooltip.Content>
+										<p>SyftBox Sync</p>
+									</Tooltip.Content>
+								</Tooltip.Root>
+								<Drawer.Content class="!max-h-[calc(100vh-40px)] h-[calc(100vh-40px)] !rounded-t-xl">
+									<div class="h-full px-6 pb-8 pt-4">
+										{#if syftboxOpen}
+											<SyftboxPanel mode="sheet" />
+										{/if}
+									</div>
+								</Drawer.Content>
+							</Drawer.Root>
+						</div>
+					</div>
+
 					<DependenciesStatus />
-
-					<Drawer.Root bind:open={logsOpen}>
-						<Tooltip.Root>
-							<Drawer.Trigger>
-								{#snippet child({ props })}
-									<Tooltip.Trigger
-										{...props}
-										class="text-primary-foreground/80 hover:text-primary-foreground rounded-md p-2 transition-colors"
-									>
-										<SquareTerminalIcon class="size-5" />
-									</Tooltip.Trigger>
-								{/snippet}
-							</Drawer.Trigger>
-							<Tooltip.Content>
-								<p>Logs</p>
-							</Tooltip.Content>
-						</Tooltip.Root>
-						<Drawer.Content class="!max-h-[calc(100vh-40px)] h-[calc(100vh-40px)] !rounded-t-xl">
-							<div class="h-full px-6 pb-8 pt-4">
-								{#if logsOpen}
-									<LogsPanel mode="sheet" />
-								{/if}
-							</div>
-						</Drawer.Content>
-					</Drawer.Root>
-
-					<Drawer.Root bind:open={sqlOpen}>
-						<Tooltip.Root>
-							<Drawer.Trigger>
-								{#snippet child({ props })}
-									<Tooltip.Trigger
-										{...props}
-										class="text-primary-foreground/80 hover:text-primary-foreground rounded-md p-2 transition-colors"
-									>
-										<DatabaseIcon class="size-5" />
-									</Tooltip.Trigger>
-								{/snippet}
-							</Drawer.Trigger>
-							<Tooltip.Content>
-								<p>SQL Console</p>
-							</Tooltip.Content>
-						</Tooltip.Root>
-						<Drawer.Content class="!max-h-[calc(100vh-40px)] h-[calc(100vh-40px)] !rounded-t-xl">
-							<div class="h-full px-6 pb-8 pt-4">
-								{#if sqlOpen}
-									<SqlPanel mode="sheet" />
-								{/if}
-							</div>
-						</Drawer.Content>
-					</Drawer.Root>
-
-					<Drawer.Root bind:open={syftboxOpen}>
-						<Tooltip.Root>
-							<Drawer.Trigger>
-								{#snippet child({ props })}
-									<Tooltip.Trigger
-										{...props}
-										class="text-primary-foreground/80 hover:text-primary-foreground rounded-md p-2 transition-colors"
-									>
-										<FolderSyncIcon class="size-5" />
-									</Tooltip.Trigger>
-								{/snippet}
-							</Drawer.Trigger>
-							<Tooltip.Content>
-								<p>SyftBox Sync</p>
-							</Tooltip.Content>
-						</Tooltip.Root>
-						<Drawer.Content class="!max-h-[calc(100vh-40px)] h-[calc(100vh-40px)] !rounded-t-xl">
-							<div class="h-full px-6 pb-8 pt-4">
-								{#if syftboxOpen}
-									<SyftboxPanel mode="sheet" />
-								{/if}
-							</div>
-						</Drawer.Content>
-					</Drawer.Root>
 
 					<Tooltip.Root>
 						<Tooltip.Trigger
-							class="text-primary-foreground/80 hover:text-primary-foreground rounded-md p-2 transition-colors"
+							class={headerIconButtonClass}
 							onclick={() => (learnOpen = true)}
 						>
 							<LibraryBigIcon class="size-5" />
@@ -226,7 +295,7 @@
 					<!-- Notifications Bell with Badge -->
 					<Tooltip.Root>
 						<Tooltip.Trigger
-							class="text-primary-foreground/80 hover:text-primary-foreground rounded-md p-2 transition-colors relative"
+							class="{headerIconButtonClass} relative"
 							onclick={() => (notificationsOpen = true)}
 						>
 							<BellIcon class="size-5" />
@@ -250,7 +319,7 @@
 
 					<Tooltip.Root>
 						<Tooltip.Trigger
-							class="text-primary-foreground/80 hover:text-primary-foreground rounded-md p-2 transition-colors"
+							class={headerIconButtonClass}
 							onclick={() => (inviteOpen = true)}
 						>
 							<UserPlusIcon class="size-5" />
@@ -262,7 +331,7 @@
 
 					<Tooltip.Root>
 						<Tooltip.Trigger
-							class="text-primary-foreground/80 hover:text-primary-foreground rounded-md p-2 transition-colors"
+							class={headerIconButtonClass}
 							onclick={() => (supportOpen = true)}
 						>
 							<CircleHelpIcon class="size-5" />

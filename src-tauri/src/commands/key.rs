@@ -358,6 +358,13 @@ fn resolve_vault_default(vault_override: Option<&Path>) -> Result<PathBuf, Strin
     biovault::config::resolve_sbc_vault_path().map_err(|e| format!("SBC_VAULT is required: {e}"))
 }
 
+fn resolve_syc_vault_path() -> Option<PathBuf> {
+    if let Some(v) = std::env::var_os("SYC_VAULT") {
+        return Some(PathBuf::from(v));
+    }
+    std::env::var_os("SYFTBOX_DATA_DIR").map(|v| PathBuf::from(v).join(".syc"))
+}
+
 fn load_existing_bundle(
     vault_path: &Path,
     identity: &str,
@@ -640,7 +647,8 @@ pub fn network_scan_datasites() -> Result<NetworkScanResult, String> {
     let config = load_config_best_effort();
     let current_email = config.email.clone();
     let (data_root, vault_path) = resolve_paths(&config, None, None)?;
-    let bundles_dir = vault_path.join("bundles");
+    let sbc_bundles_dir = vault_path.join("bundles");
+    let syc_bundles_dir = resolve_syc_vault_path().map(|v| v.join("bundles"));
 
     // Find datasites directory
     let datasites_dir = if data_root
@@ -688,11 +696,24 @@ pub fn network_scan_datasites() -> Result<NetworkScanResult, String> {
                     continue;
                 }
 
-                let local_bundle_path = bundles_dir.join(format!("{slug}.json"));
-                let is_imported = local_bundle_path.exists();
+                let sbc_local_bundle_path = sbc_bundles_dir.join(format!("{slug}.json"));
+                let syc_local_bundle_path = syc_bundles_dir
+                    .as_ref()
+                    .map(|dir| dir.join(format!("{slug}.json")));
 
-                let (has_changed, local_fingerprint) = if is_imported {
-                    match biovault::syftbox::sbc::parse_public_bundle_file(&local_bundle_path) {
+                let chosen_local_bundle = if sbc_local_bundle_path.exists() {
+                    Some(sbc_local_bundle_path.clone())
+                } else if syc_local_bundle_path.as_ref().is_some_and(|p| p.exists()) {
+                    syc_local_bundle_path.clone()
+                } else {
+                    None
+                };
+
+                let is_imported = chosen_local_bundle.is_some();
+
+                let (has_changed, local_fingerprint) = if let Some(path) = chosen_local_bundle.as_ref()
+                {
+                    match biovault::syftbox::sbc::parse_public_bundle_file(path) {
                         Ok(local_info) => {
                             let changed = local_info.fingerprint != remote_info.fingerprint;
                             (changed, Some(local_info.fingerprint))
@@ -710,11 +731,9 @@ pub fn network_scan_datasites() -> Result<NetworkScanResult, String> {
                     is_imported,
                     has_changed,
                     local_fingerprint,
-                    local_bundle_path: if is_imported {
-                        Some(local_bundle_path.to_string_lossy().to_string())
-                    } else {
-                        None
-                    },
+                    local_bundle_path: chosen_local_bundle
+                        .as_ref()
+                        .map(|p| p.to_string_lossy().to_string()),
                 };
 
                 // Record identity to avoid later duplicates
@@ -787,8 +806,14 @@ pub fn network_import_contact(identity: String) -> Result<ContactInfo, String> {
         bundles_dir.display()
     );
 
-    let remote_info = biovault::syftbox::sbc::parse_public_bundle_file(&did_path)
-        .map_err(|e| format!("failed to parse DID: {e}"))?;
+    let remote_info = biovault::syftbox::sbc::parse_public_bundle_file(&did_path).map_err(|e| {
+        format!(
+            "failed to parse DID at {}: {}. Ask {} to regenerate/republish their public key.",
+            did_path.display(),
+            e,
+            identity
+        )
+    })?;
 
     let slug = syftbox_sdk::sanitize_identity(&remote_info.identity);
     let local_bundle_path = bundles_dir.join(format!("{slug}.json"));
@@ -812,6 +837,25 @@ pub fn network_import_contact(identity: String) -> Result<ContactInfo, String> {
 
     std::fs::copy(&did_path, &local_bundle_path)
         .map_err(|e| format!("failed to import bundle: {e}"))?;
+
+    // Mirror into SYC vault as well. Message decrypt path reads from SYC bundle cache.
+    if let Some(syc_vault) = resolve_syc_vault_path() {
+        let syc_bundles_dir = syc_vault.join("bundles");
+        if !syc_bundles_dir.exists() {
+            std::fs::create_dir_all(&syc_bundles_dir)
+                .map_err(|e| format!("failed to create SYC bundles directory: {e}"))?;
+        }
+        let syc_bundle_path = syc_bundles_dir.join(format!("{slug}.json"));
+        std::fs::copy(&did_path, &syc_bundle_path)
+            .map_err(|e| format!("failed to import SYC bundle: {e}"))?;
+        if key_debug_enabled() {
+            println!(
+                "🌐 network_import_contact: copied {} to SYC {}",
+                did_path.display(),
+                syc_bundle_path.display()
+            );
+        }
+    }
 
     println!(
         "🌐 network_import_contact: copied {} to {}",

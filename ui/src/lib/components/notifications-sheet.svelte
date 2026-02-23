@@ -1,6 +1,6 @@
 <script lang="ts">
 	import * as Sheet from '$lib/components/ui/sheet/index.js'
-	import { Button, buttonVariants } from '$lib/components/ui/button/index.js'
+	import { Button } from '$lib/components/ui/button/index.js'
 	import { Badge } from '$lib/components/ui/badge/index.js'
 	import {
 		notificationsStore,
@@ -18,6 +18,7 @@
 	import TrashIcon from '@lucide/svelte/icons/trash-2'
 	import CheckIcon from '@lucide/svelte/icons/check'
 	import XIcon from '@lucide/svelte/icons/x'
+	import FilterIcon from '@lucide/svelte/icons/filter'
 
 	interface Props {
 		open?: boolean
@@ -25,6 +26,7 @@
 	}
 
 	let { open = $bindable(false), onOpenChange }: Props = $props()
+	let unreadOnly = $state(false)
 
 	function handleOpenChange(newOpen: boolean) {
 		open = newOpen
@@ -75,6 +77,21 @@
 		})
 	}
 
+	function dayLabel(date: Date): string {
+		const today = new Date()
+		const base = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+		const target = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+		const diffDays = Math.round((base.getTime() - target.getTime()) / 86400000)
+
+		if (diffDays === 0) return 'Today'
+		if (diffDays === 1) return 'Yesterday'
+		return target.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+	}
+
+	const filteredNotifications = $derived.by(() =>
+		unreadOnly ? notificationsStore.all.filter((n) => !n.read) : notificationsStore.all,
+	)
+
 	function handleNotificationClick(notification: Notification) {
 		if (!notification.read) {
 			markAsRead(notification.id)
@@ -83,87 +100,111 @@
 </script>
 
 <Sheet.Root bind:open onOpenChange={handleOpenChange}>
-	<Sheet.Content side="right" class="!top-10 !bottom-0 !h-auto w-[400px] !m-0 rounded-l-xl border-l shadow-2xl sm:w-[450px]">
-		<Sheet.Header>
-			<div class="flex items-center justify-between">
-				<div class="flex items-center gap-3">
-					<div class="flex size-10 items-center justify-center rounded-lg bg-primary/10">
-						<BellIcon class="size-5 text-primary" />
+	<Sheet.Content side="right" class="!top-10 !bottom-0 !h-auto w-[420px] !m-0 rounded-l-2xl border-l bg-background p-0 shadow-xl sm:w-[500px]">
+		<div class="flex h-full min-h-0 flex-col">
+			<div class="shrink-0 border-b bg-muted/30 px-5 py-4">
+				<div class="flex items-start justify-between gap-3">
+					<div class="flex min-w-0 items-center gap-3">
+						<div class="flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+							<BellIcon class="size-5" />
+						</div>
+						<div class="min-w-0">
+							<Sheet.Title>Notifications</Sheet.Title>
+							<Sheet.Description>
+								{#if notificationsStore.unreadCount > 0}
+									{notificationsStore.unreadCount} unread
+								{:else}
+									All caught up
+								{/if}
+							</Sheet.Description>
+						</div>
 					</div>
-					<div>
-						<Sheet.Title>Notifications</Sheet.Title>
-						<Sheet.Description>
-							{#if notificationsStore.unreadCount > 0}
-								{notificationsStore.unreadCount} unread
-							{:else}
-								All caught up
+					<div class="flex items-center gap-2">
+						<Button
+							variant={unreadOnly ? 'default' : 'outline'}
+							size="sm"
+							class="h-8"
+							onclick={() => (unreadOnly = !unreadOnly)}
+						>
+							<FilterIcon class="size-4" />
+							Unread
+						</Button>
+						{#if notificationsStore.unreadCount > 0}
+							<Button variant="outline" size="sm" class="h-8" onclick={markAllAsRead}>
+								<CheckIcon class="size-4" />
+								Read all
+							</Button>
+						{/if}
+						{#if notificationsStore.all.length > 0}
+							<Button variant="outline" size="sm" class="h-8 text-destructive" onclick={clearAllNotifications}>
+								<TrashIcon class="size-4" />
+								Clear
+							</Button>
+						{/if}
+					</div>
+				</div>
+				<div class="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+					<span>{filteredNotifications.length} shown</span>
+					<span>{notificationsStore.all.length} total</span>
+				</div>
+			</div>
+
+			<div class="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+				{#if filteredNotifications.length === 0}
+					<div class="flex h-full min-h-[280px] flex-col items-center justify-center rounded-2xl border border-dashed bg-muted/20 px-6 text-center">
+						<BellIcon class="mb-3 size-10 text-muted-foreground/35" />
+						<p class="text-sm text-muted-foreground">
+							{unreadOnly ? 'No unread notifications' : 'No notifications yet'}
+						</p>
+						<p class="mt-1 text-xs text-muted-foreground/70">
+							{unreadOnly
+								? 'Try turning off the unread filter.'
+								: "You'll see run and system updates here."}
+						</p>
+					</div>
+				{:else}
+					<div class="space-y-3">
+						{#each filteredNotifications as notification, index (notification.id)}
+							{@const Icon = getIcon(notification.type)}
+							{@const showDay =
+								index === 0 ||
+								dayLabel(filteredNotifications[index - 1].timestamp) !== dayLabel(notification.timestamp)}
+							{#if showDay}
+								<div class="sticky top-0 z-10 py-1">
+									<div class="mx-auto w-fit rounded-full border bg-background/95 px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground shadow-sm">
+										{dayLabel(notification.timestamp)}
+									</div>
+								</div>
 							{/if}
-						</Sheet.Description>
-					</div>
-				</div>
-			</div>
-		</Sheet.Header>
-
-		<div class="flex items-center justify-between py-4 border-b">
-			<span class="text-sm text-muted-foreground">
-				{notificationsStore.all.length} notifications
-			</span>
-			<div class="flex gap-2">
-				{#if notificationsStore.unreadCount > 0}
-					<Button variant="ghost" size="sm" onclick={markAllAsRead}>
-						<CheckIcon class="size-4" />
-						Mark all read
-					</Button>
-				{/if}
-				{#if notificationsStore.all.length > 0}
-					<Button variant="ghost" size="sm" onclick={clearAllNotifications}>
-						<TrashIcon class="size-4" />
-						Clear all
-					</Button>
-				{/if}
-			</div>
-		</div>
-
-		<div class="flex-1 overflow-y-auto py-4 -mx-6 px-6">
-			{#if notificationsStore.all.length === 0}
-				<div class="flex flex-col items-center justify-center py-12 text-center">
-					<BellIcon class="size-12 text-muted-foreground/30 mb-4" />
-					<p class="text-muted-foreground text-sm">No notifications yet</p>
-					<p class="text-muted-foreground/60 text-xs mt-1">
-						You'll be notified when flows complete
-					</p>
-				</div>
-			{:else}
-				<div class="space-y-2">
-					{#each notificationsStore.all as notification (notification.id)}
-						{@const Icon = getIcon(notification.type)}
 						<div
 							role="button"
 							tabindex="0"
 							onclick={() => handleNotificationClick(notification)}
 							onkeydown={(e) => e.key === 'Enter' && handleNotificationClick(notification)}
-							class="w-full flex items-start gap-3 rounded-lg border p-3 text-left transition-all hover:bg-accent cursor-pointer {!notification.read
-								? 'bg-primary/5 border-primary/20'
-								: ''}"
+								class="group w-full cursor-pointer rounded-xl border p-3 text-left transition-all hover:border-border hover:bg-muted/30 {!notification.read
+									? 'border-emerald-300/70 bg-emerald-50/60'
+									: 'bg-card'}"
 						>
-							<div class="shrink-0 mt-0.5">
+								<div class="mt-0.5 shrink-0">
 								<Icon class="size-5 {getIconColor(notification.type)}" />
 							</div>
-							<div class="flex-1 min-w-0">
-								<div class="flex items-start justify-between gap-2">
-									<span class="font-medium text-sm {!notification.read ? '' : 'text-muted-foreground'}">
+								<div class="min-w-0 flex-1">
+									<div class="flex items-start justify-between gap-2">
+										<span class="text-sm font-medium {!notification.read ? '' : 'text-muted-foreground'}">
 										{notification.title}
 									</span>
-									<span class="text-xs text-muted-foreground shrink-0">
+										<span class="shrink-0 text-xs text-muted-foreground">
 										{formatTimestamp(notification.timestamp)}
 									</span>
 								</div>
-								<p class="text-muted-foreground text-xs mt-0.5 line-clamp-2">
+									<p class="mt-0.5 line-clamp-3 text-xs text-muted-foreground">
 									{notification.message}
 								</p>
-								{#if !notification.read}
-									<Badge variant="secondary" class="mt-2 text-xs">New</Badge>
-								{/if}
+									<div class="mt-2 flex items-center gap-2">
+										{#if !notification.read}
+											<Badge variant="secondary" class="text-[10px]">Unread</Badge>
+										{/if}
+									</div>
 							</div>
 							<button
 								type="button"
@@ -171,20 +212,21 @@
 									e.stopPropagation()
 									removeNotification(notification.id)
 								}}
-								class="shrink-0 p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+									class="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
 							>
 								<XIcon class="size-4" />
 							</button>
 						</div>
 					{/each}
-				</div>
-			{/if}
-		</div>
+					</div>
+				{/if}
+			</div>
 
-		<Sheet.Footer class="border-t pt-4">
-			<Sheet.Close class={buttonVariants({ variant: 'outline', class: 'w-full' })}>
-				Close
-			</Sheet.Close>
-		</Sheet.Footer>
+			<div class="shrink-0 border-t px-4 py-3">
+				<Sheet.Close>
+					<Button variant="outline" class="w-full">Close</Button>
+				</Sheet.Close>
+			</div>
+				</div>
 	</Sheet.Content>
 </Sheet.Root>

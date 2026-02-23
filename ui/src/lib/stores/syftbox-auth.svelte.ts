@@ -162,6 +162,10 @@ export const syftboxAuthStore = {
 			throw e
 		}
 
+		// Mark authenticated immediately so UI can continue without waiting
+		state.isAuthenticated = true
+		state.email = email
+
 		// Initialize BioVault config and directory structure if needed
 		try {
 			await invoke('complete_onboarding', { email })
@@ -181,10 +185,15 @@ export const syftboxAuthStore = {
 			console.error('Failed to update profile email:', e)
 		}
 
-		// Re-check auth after successful OTP submission
-		await this.checkAuth()
-		// Auto go online after signing in
-		await this.goOnline(false)
+		// Refresh auth state in background (don't block OTP verification UX)
+		void this.checkAuth().catch((e) => {
+			console.warn('Background checkAuth after OTP failed:', e)
+		})
+
+		// Auto go online in background; this can take time on some setups
+		void this.goOnline(false).catch((e) => {
+			console.warn('Background goOnline after OTP failed:', e)
+		})
 		// Show success toast
 		toast.success('Connected to SyftBox', {
 			description: `Signed in as ${email}`,

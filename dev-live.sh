@@ -35,14 +35,33 @@ profiles_store_path() {
   echo "$HOME/.bvprofiles/profiles.json"
 }
 
+clear_profiles_store_on_reset() {
+  local store
+  store="$(profiles_store_path)"
+  local store_dir
+  store_dir="$(dirname "$store")"
+
+  if [[ -f "$store" ]]; then
+    echo "[dev-live] --reset: removing profiles store at $store"
+    rm -f "$store"
+  else
+    echo "[dev-live] --reset: no profiles store found at $store"
+  fi
+
+  if [[ -d "$store_dir" ]]; then
+    rmdir "$store_dir" 2>/dev/null || true
+  fi
+}
+
 prompt_for_profiles() {
   local count="$1"
   local store
   store="$(profiles_store_path)"
 
   if [[ ! -f "$store" ]]; then
-    echo "[dev-live] Profiles store not found at $store; using defaults." >&2
-    return 0
+    echo "[dev-live] Profiles store not found at $store." >&2
+    echo "[dev-live] No profiles available for selection." >&2
+    return 2
   fi
 
   local profile_lines
@@ -65,8 +84,8 @@ for p in profiles:
     print(f"{email}|{home}|{last}")
 PY
 )"; then
-    echo "[dev-live] Failed to read profiles store; using defaults." >&2
-    return 0
+    echo "[dev-live] Failed to read profiles store." >&2
+    return 2
   fi
 
   local -a emails=()
@@ -80,13 +99,13 @@ PY
   done <<< "$profile_lines"
 
   if ((${#emails[@]} < count)); then
-    echo "[dev-live] Only found ${#emails[@]} profile(s) with email; using defaults." >&2
-    return 0
+    echo "[dev-live] Only found ${#emails[@]} profile(s) with email; need $count." >&2
+    return 2
   fi
 
   if [[ ! -t 0 ]]; then
-    echo "[dev-live] Non-interactive terminal; using defaults." >&2
-    return 0
+    echo "[dev-live] Non-interactive terminal; cannot prompt for profile selection." >&2
+    return 2
   fi
 
   local -a selected=()
@@ -110,8 +129,8 @@ PY
     )"
 
     if [[ -z "${selection:-}" ]]; then
-      echo "[dev-live] No profiles selected; using defaults." >&2
-      return 0
+      echo "[dev-live] No profiles selected." >&2
+      return 2
     fi
 
     while IFS=$'\t' read -r email _; do
@@ -224,10 +243,22 @@ if ! [[ "$NUM_CLIENTS" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
+if (( RESET_FLAG )); then
+  clear_profiles_store_on_reset
+fi
+
+if (( PROVISION_CLIENTS && RESET_FLAG )) && ! has_client_args; then
+  echo "[dev-live] --reset with no explicit clients; falling back to --first-run." >&2
+  PROVISION_CLIENTS=0
+fi
+
 case "$NUM_CLIENTS" in
   1)
     if (( PROVISION_CLIENTS && ! RESET_FLAG )) && ! has_client_args; then
-      prompt_for_profiles "$NUM_CLIENTS"
+      if ! prompt_for_profiles "$NUM_CLIENTS"; then
+        echo "[dev-live] No profiles selected/available; falling back to --first-run." >&2
+        PROVISION_CLIENTS=0
+      fi
     fi
     if (( ! PROVISION_CLIENTS )); then
       ARGS=(--first-run "${ARGS[@]}")
@@ -239,7 +270,10 @@ case "$NUM_CLIENTS" in
     ;;
   2)
     if (( PROVISION_CLIENTS && ! RESET_FLAG )) && ! has_client_args; then
-      prompt_for_profiles "$NUM_CLIENTS"
+      if ! prompt_for_profiles "$NUM_CLIENTS"; then
+        echo "[dev-live] No profiles selected/available; falling back to --first-run." >&2
+        PROVISION_CLIENTS=0
+      fi
     fi
     if (( ! PROVISION_CLIENTS )); then
       ARGS=(--first-run "${ARGS[@]}")

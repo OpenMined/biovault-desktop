@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation'
 	import { invoke } from '@tauri-apps/api/core'
 	import { onMount } from 'svelte'
+	import { toast } from 'svelte-sonner'
 	import { Button } from '$lib/components/ui/button/index.js'
 	import * as Card from '$lib/components/ui/card/index.js'
 	import * as Dialog from '$lib/components/ui/dialog/index.js'
@@ -48,6 +49,17 @@
 		work_dir: string
 		results_dir?: string
 		created_at: string
+	}
+
+	interface Dependency {
+		name: string
+		found: boolean
+		running?: boolean
+	}
+
+	interface DependencyCheckResult {
+		dependencies: Dependency[]
+		all_found: boolean
 	}
 
 	type FlowInputSpec = string | { type?: string; default?: string | null }
@@ -1377,6 +1389,31 @@
 		}
 	}
 
+	async function tryOpenRunDialog() {
+		try {
+			const result = await invoke<DependencyCheckResult>('check_dependencies')
+			const docker = result.dependencies.find((dep) => dep.name.toLowerCase() === 'docker')
+			if (!docker?.found) {
+				toast.error('Docker is not installed', {
+					description: 'Install Docker Desktop before running flows.',
+				})
+				return
+			}
+			if (docker.running === false) {
+				toast.error('Docker is not running', {
+					description: 'Start Docker Desktop and try again.',
+				})
+				return
+			}
+		} catch (e) {
+			toast.error('Could not verify dependencies', {
+				description: e instanceof Error ? e.message : 'Check Dependencies in the top bar and try again.',
+			})
+			return
+		}
+		runDialogOpen = true
+	}
+
 	function yamlIsDirty() {
 		return yamlText !== initialYaml
 	}
@@ -1449,7 +1486,7 @@
 					Open Folder
 				</Button>
 
-				<Button size="sm" onclick={() => (runDialogOpen = true)} disabled={!currentFlow}>
+				<Button size="sm" onclick={tryOpenRunDialog} disabled={!currentFlow}>
 					<PlayIcon class="size-4" />
 					Run
 				</Button>

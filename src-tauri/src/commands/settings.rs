@@ -230,6 +230,16 @@ fn reset_all_data_impl(state: &AppState, preserve_keys: bool) -> Result<(), Stri
         }
     }
 
+    // Reset should clear profile registry and profile homes too, otherwise stale
+    // profile entries survive and immediately repopulate UI after reset.
+    crate::desktop_log!("RESET: Clearing profile store and profile homes...");
+    crate::commands::profiles::clear_all_profiles_and_homes()?;
+    // Force profile picker after reset so we don't immediately rehydrate
+    // from stale in-process profile env.
+    env::remove_var("BIOVAULT_PROFILE_ID");
+    env::set_var("BIOVAULT_PROFILE_PICKER", "1");
+    env::set_var("BIOVAULT_FORCE_PROFILE_PICKER", "1");
+
     // Recreate the BioVault home and connections so the running app sees a clean state
     let new_home = biovault::config::get_biovault_home()
         .map_err(|e| format!("Failed to recreate BioVault home: {}", e))?;

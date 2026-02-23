@@ -1130,12 +1130,22 @@
 
 							<!-- Table -->
 							<div class="rounded-md border">
-								<Table.Root>
+								<Table.Root class="table-fixed">
 									<Table.Header>
 										{#each table.getHeaderGroups() as headerGroup (headerGroup.id)}
 											<Table.Row>
 												{#each headerGroup.headers as header (header.id)}
-													<Table.Head class="[&:has([role=checkbox])]:pl-3">
+													<Table.Head
+														class="[&:has([role=checkbox])]:pl-3 {header.column.id === 'select'
+															? 'w-10'
+															: header.column.id === 'fileId'
+																? 'w-20'
+																: header.column.id === 'path' || header.column.id === 'mock'
+																	? 'w-[34%]'
+																	: header.column.id === 'mockActions' || header.column.id === 'actions'
+																		? 'w-12'
+																		: ''}"
+													>
 														{#if !header.isPlaceholder}
 															<FlexRender
 																content={header.column.columnDef.header}
@@ -1151,7 +1161,11 @@
 										{#each table.getRowModel().rows as row (row.id)}
 											<Table.Row data-state={row.getIsSelected() && 'selected'}>
 												{#each row.getVisibleCells() as cell (cell.id)}
-													<Table.Cell class="[&:has([role=checkbox])]:pl-3">
+													<Table.Cell
+														class="[&:has([role=checkbox])]:pl-3 {cell.column.id === 'path' || cell.column.id === 'mock'
+															? 'max-w-0 overflow-hidden'
+															: ''}"
+													>
 														<FlexRender
 															content={cell.column.columnDef.cell}
 															context={cell.getContext()}

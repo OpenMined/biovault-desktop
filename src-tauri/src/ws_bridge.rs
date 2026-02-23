@@ -2159,15 +2159,16 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             .map_err(|e| format!("Failed to parse email: {}", e))?;
             let otp: String = serde_json::from_value(
                 args.get("otp")
+                    .or_else(|| args.get("code"))
                     .cloned()
-                    .ok_or_else(|| "Missing otp".to_string())?,
+                    .ok_or_else(|| "Missing otp/code".to_string())?,
             )
-            .map_err(|e| format!("Failed to parse otp: {}", e))?;
+            .map_err(|e| format!("Failed to parse otp/code: {}", e))?;
             let server_url: Option<String> = args
                 .get("serverUrl")
                 .or_else(|| args.get("server_url"))
                 .and_then(|v| serde_json::from_value(v.clone()).ok());
-            crate::commands::syftbox::syftbox_submit_otp(email, otp, server_url)
+            crate::commands::syftbox::syftbox_submit_otp(otp, email, server_url)
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::Value::Null)

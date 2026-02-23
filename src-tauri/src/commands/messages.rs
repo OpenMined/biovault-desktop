@@ -187,6 +187,45 @@ fn syftbox_storage(config: &biovault::config::Config) -> Result<SyftBoxStorage, 
     Ok(SyftBoxStorage::new(&data_dir))
 }
 
+fn should_attempt_identity_recovery(sync_error: &str) -> bool {
+    let lower = sync_error.to_lowercase();
+    lower.contains("no identities found in vault")
+        || (lower.contains("sbc key generate") && lower.contains("vault"))
+}
+
+fn try_auto_provision_local_identity(config: &biovault::config::Config) -> Result<bool, String> {
+    let email = config.email.trim();
+    if email.is_empty() || email == "setup@pending" {
+        return Ok(false);
+    }
+
+    let data_root = config
+        .get_syftbox_data_dir()
+        .unwrap_or_else(|_| {
+            biovault::config::get_biovault_home().unwrap_or_else(|_| PathBuf::from("BioVault"))
+        });
+    let encrypted_root = syftbox_sdk::syftbox::sbc::resolve_encrypted_root(&data_root);
+
+    let vault_path = match biovault::config::resolve_sbc_vault_path() {
+        Ok(path) => path,
+        Err(_) => {
+            let home = biovault::config::get_biovault_home()
+                .unwrap_or_else(|_| PathBuf::from("BioVault"));
+            syftbox_sdk::syftbox::sbc::vault_path_for_home(&home)
+        }
+    };
+
+    biovault::syftbox::sbc::provision_local_identity_with_options(
+        email,
+        &encrypted_root,
+        Some(&vault_path),
+        false,
+    )
+    .map_err(|e| format!("Failed to auto-provision local identity: {e}"))?;
+
+    Ok(true)
+}
+
 fn should_skip_flow_path(rel: &Path) -> bool {
     if rel.file_name() == Some(OsStr::new("syft.pub.yaml")) {
         return true;
@@ -827,8 +866,9 @@ pub fn list_spaces(limit: Option<usize>) -> Result<Vec<CollaborationSpace>, Stri
                 for participant in extract_group_chat_participants(msg) {
                     participants.insert(participant);
                 }
-                if explicit_group_name.is_none() {
-                    explicit_group_name = extract_group_chat_name(msg);
+                if let Some(name) = extract_group_chat_name(msg) {
+                    // Prefer the most recently declared group name so rename events take effect.
+                    explicit_group_name = Some(name);
                 }
             }
 
@@ -1016,12 +1056,24 @@ pub fn send_message(request: MessageSendRequest) -> Result<VaultMessage, String>
         // Prepare metadata with group info
         let mut base_metadata = request.metadata.clone().unwrap_or(serde_json::json!({}));
         if let Some(obj) = base_metadata.as_object_mut() {
+            let mut group_chat = obj
+                .get("group_chat")
+                .and_then(|v| v.as_object())
+                .cloned()
+                .unwrap_or_default();
+            group_chat.insert(
+                "participants".to_string(),
+                serde_json::Value::Array(
+                    all_participants
+                        .iter()
+                        .map(|p| serde_json::Value::String(p.clone()))
+                        .collect(),
+                ),
+            );
+            group_chat.insert("is_group".to_string(), serde_json::Value::Bool(true));
             obj.insert(
                 "group_chat".to_string(),
-                serde_json::json!({
-                    "participants": all_participants,
-                    "is_group": true,
-                }),
+                serde_json::Value::Object(group_chat),
             );
         }
 
@@ -1242,9 +1294,20 @@ pub fn sync_messages() -> Result<MessageSyncResult, String> {
     let (_db, sync) = init_message_system(&config)
         .map_err(|e| format!("Failed to initialize messaging: {}", e))?;
 
-    let (ids, count) = sync
-        .sync_quiet()
-        .map_err(|e| format!("Failed to sync messages: {}", e))?;
+    let (ids, count) = match sync.sync_quiet() {
+        Ok(result) => result,
+        Err(err) => {
+            let err_text = err.to_string();
+            if should_attempt_identity_recovery(&err_text)
+                && try_auto_provision_local_identity(&config)?
+            {
+                sync.sync_quiet()
+                    .map_err(|e| format!("Failed to sync messages after auto key setup: {}", e))?
+            } else {
+                return Err(format!("Failed to sync messages: {}", err_text));
+            }
+        }
+    };
 
     Ok(MessageSyncResult {
         new_message_ids: ids,
@@ -1433,9 +1496,21 @@ pub fn sync_messages_with_failures() -> Result<SyncWithFailuresResult, String> {
     let (_db, sync) = init_message_system(&config)
         .map_err(|e| format!("Failed to initialize messaging: {}", e))?;
 
-    let (ids, count, new_failed) = sync
-        .sync_quiet_with_failures()
-        .map_err(|e| format!("Failed to sync messages: {}", e))?;
+    let (ids, count, new_failed) = match sync.sync_quiet_with_failures() {
+        Ok(result) => result,
+        Err(err) => {
+            let err_text = err.to_string();
+            if should_attempt_identity_recovery(&err_text)
+                && try_auto_provision_local_identity(&config)?
+            {
+                sync.sync_quiet_with_failures().map_err(|e| {
+                    format!("Failed to sync messages after auto key setup: {}", e)
+                })?
+            } else {
+                return Err(format!("Failed to sync messages: {}", err_text));
+            }
+        }
+    };
 
     let total_failed = sync.count_failed_messages().unwrap_or(0);
 
@@ -2072,9 +2147,21 @@ pub fn refresh_messages_batched(
         .map_err(|e| format!("Failed to initialize messaging: {}", e))?;
 
     // Sync messages
-    let (ids, count, new_failed) = sync
-        .sync_quiet_with_failures()
-        .map_err(|e| format!("Failed to sync messages: {}", e))?;
+    let (ids, count, new_failed) = match sync.sync_quiet_with_failures() {
+        Ok(result) => result,
+        Err(err) => {
+            let err_text = err.to_string();
+            if should_attempt_identity_recovery(&err_text)
+                && try_auto_provision_local_identity(&config)?
+            {
+                sync.sync_quiet_with_failures().map_err(|e| {
+                    format!("Failed to sync messages after auto key setup: {}", e)
+                })?
+            } else {
+                return Err(format!("Failed to sync messages: {}", err_text));
+            }
+        }
+    };
 
     let total_failed = sync.count_failed_messages().unwrap_or(0);
 

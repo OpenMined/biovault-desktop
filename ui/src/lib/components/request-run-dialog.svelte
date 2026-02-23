@@ -14,7 +14,7 @@
 	import ScanEyeIcon from '@lucide/svelte/icons/scan-eye'
 	import { toast } from 'svelte-sonner'
 
-	interface Pipeline {
+	interface Flow {
 		id: number
 		name: string
 		flow_path: string
@@ -31,18 +31,18 @@
 	let { open = $bindable(false), onOpenChange, datasetName, authorEmail, onSent }: Props =
 		$props()
 
-	let pipelines: Pipeline[] = $state([])
+	let flows: Flow[] = $state([])
 	let loading = $state(true)
 	let sending = $state(false)
 	let error = $state<string | null>(null)
-	let selectedPipeline: Pipeline | null = $state(null)
+	let selectedFlow: Flow | null = $state(null)
 	let requestMessage = $state("")
 
-	async function loadPipelines() {
+	async function loadFlows() {
 		try {
 			loading = true
 			error = null
-			pipelines = await invoke<Pipeline[]>('get_flows')
+			flows = await invoke<Flow[]>('get_flows')
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e)
 		} finally {
@@ -54,25 +54,25 @@
 		open = newOpen
 		onOpenChange?.(newOpen)
 		if (newOpen) {
-			selectedPipeline = null
+			selectedFlow = null
 			requestMessage = ""
 			error = null
-			loadPipelines()
+			loadFlows()
 		}
 	}
 
 	async function sendRequest() {
-		if (!selectedPipeline) return
+		if (!selectedFlow) return
 		sending = true
 		error = null
 
 		try {
 			await invoke('send_flow_request', {
-				pipelineName: selectedPipeline.name,
-				pipelineVersion: "1.0.0", // For now hardcoded, backend handles it
+				flowName: selectedFlow.name,
+				flowVersion: "1.0.0", // For now hardcoded, backend handles it
 				datasetName: datasetName,
 				recipient: authorEmail,
-				message: requestMessage.trim() || `I would like to run the ${selectedPipeline.name} pipeline on your ${datasetName} dataset.`
+				message: requestMessage.trim() || `I would like to run the ${selectedFlow.name} flow on your ${datasetName} dataset.`
 			})
 
 			toast.success(`Request sent to ${authorEmail}`)
@@ -96,7 +96,7 @@
 
 	$effect(() => {
 		if (open) {
-			loadPipelines()
+			loadFlows()
 		}
 	})
 </script>
@@ -106,33 +106,33 @@
 		<Dialog.Header>
 			<Dialog.Title>Request Run on {datasetName}</Dialog.Title>
 			<Dialog.Description>
-				Send a request to <b>{authorEmail}</b> to execute a pipeline on their private data.
+				Send a request to <b>{authorEmail}</b> to execute a flow on their private data.
 			</Dialog.Description>
 		</Dialog.Header>
 
 		<div class="py-4 space-y-4">
 			<div class="space-y-2">
-				<Label>Select Pipeline</Label>
+				<Label>Select Flow</Label>
 				{#if loading}
 					<div class="flex items-center justify-center py-8">
 						<LoaderIcon class="size-6 animate-spin text-muted-foreground" />
 					</div>
-				{:else if pipelines.length === 0}
+				{:else if flows.length === 0}
 					<div class="text-center py-8 text-muted-foreground border rounded-lg bg-muted/20">
 						<WorkflowIcon class="size-12 mx-auto mb-3 opacity-20" />
-						<p>No pipelines installed.</p>
-						<p class="text-xs">Install a pipeline from the Explore tab first.</p>
+						<p>No flows installed.</p>
+						<p class="text-xs">Install a flow from the Explore tab first.</p>
 					</div>
 				{:else}
 					<div class="space-y-2 max-h-[200px] overflow-y-auto pr-1">
-						{#each pipelines as pipeline (pipeline.id)}
-							{@const Icon = getFlowIcon(pipeline.name)}
+						{#each flows as flow (flow.id)}
+							{@const Icon = getFlowIcon(flow.name)}
 							<button
 								type="button"
-								onclick={() => (selectedPipeline = pipeline)}
-								data-testid={`request-run-flow-${pipeline.name}`}
-								class="w-full flex items-center gap-3 rounded-lg border p-3 text-left transition-all hover:bg-accent {selectedPipeline?.id ===
-								pipeline.id
+								onclick={() => (selectedFlow = flow)}
+								data-testid={`request-run-flow-${flow.name}`}
+								class="w-full flex items-center gap-3 rounded-lg border p-3 text-left transition-all hover:bg-accent {selectedFlow?.id ===
+								flow.id
 									? 'border-primary bg-primary/5'
 									: ''}"
 							>
@@ -142,12 +142,12 @@
 									<Icon class="size-5" />
 								</div>
 								<div class="flex-1 min-w-0">
-									<div class="font-medium text-sm">{pipeline.name}</div>
+									<div class="font-medium text-sm">{flow.name}</div>
 									<div class="text-muted-foreground text-xs truncate">
-										{pipeline.flow_path.split('/').pop()}
+										{flow.flow_path.split('/').pop()}
 									</div>
 								</div>
-								{#if selectedPipeline?.id === pipeline.id}
+								{#if selectedFlow?.id === flow.id}
 									<div class="flex size-6 items-center justify-center rounded-full bg-primary text-white">
 										<CheckIcon class="size-4" />
 									</div>
@@ -183,7 +183,7 @@
 			<Button
 				data-testid="request-run-submit"
 				onclick={sendRequest}
-				disabled={sending || !selectedPipeline || loading}
+				disabled={sending || !selectedFlow || loading}
 			>
 				{#if sending}
 					<LoaderIcon class="size-4 animate-spin mr-2" />

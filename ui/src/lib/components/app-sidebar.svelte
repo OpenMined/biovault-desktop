@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core'
 	import { onMount } from 'svelte'
-	import { goto } from '$app/navigation'
 	import { page } from '$app/stores'
+	import { getAvatarToneClass } from '$lib/utils.js'
 	import { syftboxAuthStore } from '$lib/stores/syftbox-auth.svelte'
 	import { profilesStore } from '$lib/stores/profiles.svelte'
 	import SyftboxSignInDialog from '$lib/components/syftbox-sign-in-dialog.svelte'
@@ -22,6 +22,7 @@
 	import WifiOffIcon from '@lucide/svelte/icons/wifi-off'
 	import Loader2Icon from '@lucide/svelte/icons/loader-2'
 	import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert'
+	import CircleIcon from '@lucide/svelte/icons/circle'
 	import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js'
 	import * as Tooltip from '$lib/components/ui/tooltip/index.js'
 	import { Switch } from '$lib/components/ui/switch/index.js'
@@ -40,10 +41,11 @@
 		{ title: 'Datasets', url: '/datasets', icon: DatabaseIcon, testId: 'nav-datasets' },
 		{ title: 'Spaces', url: '/collaborate', icon: UsersIcon, testId: 'nav-collaborate' },
 		{ title: 'Results', url: '/runs', icon: PlayCircleIcon, testId: 'nav-results' },
+		{ title: 'Settings', url: '/settings', icon: SettingsIcon, testId: 'nav-settings' },
 	]
 
-	// User identity from BioVault settings
-	let userEmail = $state('')
+	// SyftBox auth identity (network account), separate from selected profile identity.
+	let syftboxEmail = $state('')
 	let userLoading = $state(true)
 	let signInDialogOpen = $state(false)
 	let disconnectDialogOpen = $state(false)
@@ -52,11 +54,40 @@
 	let devstackHealthWarning = $state(false)
 	let devstackRefresh429Count = $state(0)
 
-	// Derive display name from email (part before @)
-	const userName = $derived(userEmail ? userEmail.split('@')[0] : 'Not signed in')
+	const currentProfileEmail = $derived(profilesStore.currentProfile?.email || '')
+	const displayIdentityEmail = $derived(currentProfileEmail || syftboxEmail)
+
+	// Derive display name from profile first, then SyftBox account as fallback.
+	const userName = $derived(
+		currentProfileEmail
+			? currentProfileEmail.split('@')[0]
+			: profilesStore.currentProfile
+				? syftboxEmail
+					? syftboxEmail.split('@')[0]
+					: 'Guest'
+				: displayIdentityEmail
+					? displayIdentityEmail.split('@')[0]
+					: 'No profile'
+	)
+
+	const userSubline = $derived(
+		profilesStore.currentProfile
+			? currentProfileEmail || syftboxEmail || 'Local profile'
+			: displayIdentityEmail || 'No profile selected'
+	)
+	const avatarSeed = $derived(
+		displayIdentityEmail || (profilesStore.currentProfile ? `guest:${profilesStore.currentProfile.id}` : '')
+	)
+	const userAvatarTone = $derived(getAvatarToneClass(avatarSeed))
 
 	// Derive initials from email
-	const userInitials = $derived(userEmail ? userEmail.substring(0, 2).toUpperCase() : '?')
+	const userInitials = $derived(
+		displayIdentityEmail
+			? displayIdentityEmail.substring(0, 2).toUpperCase()
+			: profilesStore.currentProfile
+				? 'GU'
+				: '?'
+	)
 
 	// Check if user is authenticated to SyftBox
 	const isAuthenticated = $derived(syftboxAuthStore.isAuthenticated)
@@ -77,13 +108,13 @@
 		}
 	}
 
-	// Update email when auth state changes
+	// Update SyftBox account email when auth state changes
 	$effect(() => {
 		if (!profileRequired && syftboxAuthStore.isAuthenticated && syftboxAuthStore.email) {
-			userEmail = syftboxAuthStore.email
+			syftboxEmail = syftboxAuthStore.email
 		}
 		if (profileRequired) {
-			userEmail = ''
+			syftboxEmail = ''
 		}
 	})
 
@@ -118,11 +149,11 @@
 						// no-op
 					}
 					syftboxAuthStore.setAuthenticated(false, '')
-					userEmail = ''
+					syftboxEmail = ''
 				} else {
 					await syftboxAuthStore.checkAuth()
 					const settings = await invoke<{ email: string }>('get_settings')
-					userEmail = settings.email || ''
+					syftboxEmail = settings.email || ''
 				}
 				await refreshDevstackHealth()
 				healthPoll = setInterval(refreshDevstackHealth, 15000)
@@ -146,7 +177,7 @@
 		disconnecting = true
 		try {
 			await syftboxAuthStore.disconnect()
-			userEmail = ''
+			syftboxEmail = ''
 		} catch (e) {
 			console.error('Failed to disconnect:', e)
 		} finally {
@@ -192,13 +223,13 @@
 									<Tooltip.Root>
 										<Tooltip.Trigger class="relative">
 											<Avatar.Root class="h-8 w-8 rounded-lg">
-												<Avatar.Fallback class="rounded-lg">
+												<Avatar.Fallback class={`rounded-lg ${userAvatarTone}`}>
 													{userLoading ? '...' : userInitials}
 												</Avatar.Fallback>
 											</Avatar.Root>
-											{#if isAuthenticatedForUi}
+											{#if !profileRequired}
 												<span
-													class="absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-sidebar {isOnlineForUi
+													class="group-data-[collapsible=icon]:block absolute -bottom-0.5 -right-0.5 hidden size-2.5 rounded-full border border-sidebar {isAuthenticatedForUi && isOnlineForUi
 														? 'bg-emerald-500'
 														: 'bg-slate-400'}"
 												></span>
@@ -220,10 +251,18 @@
 								<div
 									class="group-data-[collapsible=icon]:hidden grid flex-1 text-left text-sm leading-tight"
 								>
-									<span class="truncate font-semibold">{userLoading ? 'Loading...' : userName}</span
-									>
+									<span class="truncate font-semibold inline-flex items-center gap-1.5">
+										{#if !profileRequired}
+											<CircleIcon
+												class="size-2.5 shrink-0 fill-current {isAuthenticatedForUi && isOnlineForUi
+													? 'text-emerald-500'
+													: 'text-slate-400'}"
+											/>
+										{/if}
+										<span>{userLoading ? 'Loading...' : userName}</span>
+									</span>
 									<span class="truncate text-xs"
-										>{userLoading ? '' : userEmail || 'Not configured'}</span
+										>{userLoading ? '' : userSubline}</span
 									>
 									{#if devstackHealthWarning}
 										<span class="mt-0.5 inline-flex items-center gap-1 text-[11px] text-amber-700">
@@ -243,13 +282,22 @@
 						<DropdownMenu.Label class="p-0 font-normal">
 							<div class="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
 								<Avatar.Root class="h-8 w-8 rounded-lg">
-									<Avatar.Fallback class="rounded-lg">
+									<Avatar.Fallback class={`rounded-lg ${userAvatarTone}`}>
 										{userInitials}
 									</Avatar.Fallback>
 								</Avatar.Root>
 								<div class="grid flex-1 text-left text-sm leading-tight">
-									<span class="truncate font-semibold">{userName}</span>
-									<span class="truncate text-xs">{userEmail || 'Not configured'}</span>
+									<span class="truncate font-semibold inline-flex items-center gap-1.5">
+										{#if !profileRequired}
+											<CircleIcon
+												class="size-2.5 shrink-0 fill-current {isAuthenticatedForUi && isOnlineForUi
+													? 'text-emerald-500'
+													: 'text-slate-400'}"
+											/>
+										{/if}
+										<span>{userName}</span>
+									</span>
+									<span class="truncate text-xs">{userSubline}</span>
 									{#if devstackHealthWarning}
 										<span class="mt-0.5 inline-flex items-center gap-1 text-[11px] text-amber-700">
 											<TriangleAlertIcon class="size-3" />
@@ -257,19 +305,17 @@
 										</span>
 									{/if}
 								</div>
+								<button
+									type="button"
+									class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+									onclick={() => (profileSwitcherOpen = true)}
+									title="Switch profile"
+									aria-label="Switch profile"
+								>
+									<ArrowRightLeftIcon class="size-4" />
+								</button>
 							</div>
 						</DropdownMenu.Label>
-						<DropdownMenu.Separator />
-						<DropdownMenu.Group>
-							<DropdownMenu.Item onclick={() => goto('/settings')}>
-								<SettingsIcon />
-								Settings
-							</DropdownMenu.Item>
-							<DropdownMenu.Item onclick={() => (profileSwitcherOpen = true)}>
-								<ArrowRightLeftIcon />
-								Switch Profile
-							</DropdownMenu.Item>
-						</DropdownMenu.Group>
 						<DropdownMenu.Separator />
 							{#if isAuthenticatedForUi}
 								<DropdownMenu.Group>

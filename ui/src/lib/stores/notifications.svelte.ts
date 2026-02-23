@@ -1,4 +1,6 @@
 // Notifications store using Svelte 5 runes
+const NOTIFICATIONS_STORAGE_KEY = 'bv-notifications'
+const NOTIFICATIONS_PROFILE_SCOPE_KEY = 'bv-notifications-profile-id'
 
 export interface Notification {
 	id: string
@@ -16,7 +18,7 @@ let notifications = $state<Notification[]>([])
 // Load from localStorage on init
 if (typeof window !== 'undefined') {
 	try {
-		const stored = localStorage.getItem('bv-notifications')
+		const stored = localStorage.getItem(NOTIFICATIONS_STORAGE_KEY)
 		if (stored) {
 			const parsed = JSON.parse(stored)
 			notifications = parsed.map((n: Notification) => ({
@@ -33,10 +35,37 @@ if (typeof window !== 'undefined') {
 function persist() {
 	if (typeof window !== 'undefined') {
 		try {
-			localStorage.setItem('bv-notifications', JSON.stringify(notifications))
+			localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, JSON.stringify(notifications))
 		} catch {
 			// Ignore storage errors
 		}
+	}
+}
+
+export function syncNotificationsProfileScope(profileId: string | null | undefined) {
+	if (typeof window === 'undefined') return
+
+	const normalized = (profileId || '').trim()
+
+	try {
+		const scoped = localStorage.getItem(NOTIFICATIONS_PROFILE_SCOPE_KEY) || ''
+		if (!scoped) {
+			// First run for scoped notifications: just set scope without clearing existing history.
+			if (normalized) localStorage.setItem(NOTIFICATIONS_PROFILE_SCOPE_KEY, normalized)
+			return
+		}
+
+		if (scoped !== normalized) {
+			notifications = []
+			persist()
+			if (normalized) {
+				localStorage.setItem(NOTIFICATIONS_PROFILE_SCOPE_KEY, normalized)
+			} else {
+				localStorage.removeItem(NOTIFICATIONS_PROFILE_SCOPE_KEY)
+			}
+		}
+	} catch {
+		// Ignore storage errors
 	}
 }
 

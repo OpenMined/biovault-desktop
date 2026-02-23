@@ -2,13 +2,17 @@
 	import { goto } from '$app/navigation'
 	import { invoke } from '@tauri-apps/api/core'
 	import { onMount } from 'svelte'
+	import { confirm } from '@tauri-apps/plugin-dialog'
 	import PageHeader from '$lib/components/page-header.svelte'
 	import CreateFlowDialog from '$lib/components/create-flow-dialog.svelte'
 	import * as Empty from '$lib/components/ui/empty/index.js'
 	import { Button } from '$lib/components/ui/button/index.js'
+	import { toast } from 'svelte-sonner'
 	import WorkflowIcon from '@lucide/svelte/icons/workflow'
 	import PlusIcon from '@lucide/svelte/icons/plus'
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right'
+	import Loader2Icon from '@lucide/svelte/icons/loader-2'
+	import TrashIcon from '@lucide/svelte/icons/trash-2'
 	import DnaIcon from '@lucide/svelte/icons/dna'
 	import UserIcon from '@lucide/svelte/icons/user'
 	import ScanEyeIcon from '@lucide/svelte/icons/scan-eye'
@@ -30,6 +34,7 @@
 	let loading = $state(true)
 	let error: string | null = $state(null)
 	let createDialogOpen = $state(false)
+	let deletingFlowId: number | null = $state(null)
 
 	async function loadFlows() {
 		try {
@@ -46,6 +51,26 @@
 
 	function handleFlowCreated() {
 		loadFlows()
+	}
+
+	async function deleteFlow(flow: Pipeline) {
+		if (deletingFlowId !== null) return
+		const ok = await confirm(`Delete flow "${flow.name}"? This cannot be undone.`, {
+			title: 'Delete Flow',
+			kind: 'warning',
+		})
+		if (!ok) return
+
+		deletingFlowId = flow.id
+		try {
+			await invoke('delete_flow', { flowId: flow.id })
+			flows = flows.filter((f) => f.id !== flow.id)
+			toast.success(`Deleted flow "${flow.name}"`)
+		} catch (e) {
+			toast.error('Failed to delete flow', { description: String(e) })
+		} finally {
+			deletingFlowId = null
+		}
 	}
 
 	// Map known flow names to icons and colors
@@ -142,6 +167,24 @@
 									{/if}
 								</p>
 							</div>
+							<Button
+								type="button"
+								size="icon"
+								variant="ghost"
+								class="size-8 text-muted-foreground hover:text-destructive"
+								disabled={deletingFlowId === flow.id}
+								onclick={(e) => {
+									e.stopPropagation()
+									void deleteFlow(flow)
+								}}
+								aria-label={`Delete ${flow.name}`}
+							>
+								{#if deletingFlowId === flow.id}
+									<Loader2Icon class="size-4 animate-spin" />
+								{:else}
+									<TrashIcon class="size-4" />
+								{/if}
+							</Button>
 							<ChevronRightIcon
 								class="size-5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
 							/>

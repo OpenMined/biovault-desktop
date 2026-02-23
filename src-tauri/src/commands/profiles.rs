@@ -249,6 +249,41 @@ fn save_store(store: &ProfileStore) -> Result<(), String> {
     Ok(())
 }
 
+pub fn clear_all_profiles_and_homes() -> Result<(), String> {
+    if !profiles_enabled() {
+        return Ok(());
+    }
+
+    let store_path = profiles_store_path()?;
+    let store = load_store()?;
+
+    for entry in &store.profiles {
+        let home = PathBuf::from(&entry.biovault_home);
+        if home.exists() {
+            fs::remove_dir_all(&home).map_err(|e| {
+                format!(
+                    "Failed to delete profile home {}: {}",
+                    home.display(),
+                    e
+                )
+            })?;
+        }
+    }
+
+    if store_path.exists() {
+        fs::remove_file(&store_path)
+            .map_err(|e| format!("Failed to remove profiles store {}: {}", store_path.display(), e))?;
+    }
+
+    if let Some(parent) = store_path.parent() {
+        if parent.exists() {
+            let _ = fs::remove_dir(parent);
+        }
+    }
+
+    Ok(())
+}
+
 fn profile_lock_path(home: &Path) -> PathBuf {
     home.join(PROFILE_LOCK_FILE)
 }
@@ -450,8 +485,7 @@ fn should_show_picker(store: &ProfileStore) -> bool {
     if store.force_picker_once {
         return true;
     }
-    // Show picker only when multiple profiles exist so switching is relevant.
-    store.profiles.len() > 1
+    false
 }
 
 fn is_ws_bridge_dev_mode() -> bool {
@@ -742,6 +776,10 @@ pub fn profiles_get_boot_state() -> Result<ProfilesBootState, String> {
     }
 
     let mut store = ensure_legacy_profile_migrated(load_store()?)?;
+    // In picker mode (or when explicitly forced), do not auto-register BIOVAULT_HOME
+    // into the profile store. This allows true "blank slate" reset flows.
+    let picker_mode = env::var_os("BIOVAULT_PROFILE_PICKER").is_some()
+        || env_flag_true("BIOVAULT_FORCE_PROFILE_PICKER");
     let mut current = env::var("BIOVAULT_PROFILE_ID")
         .ok()
         .map(|val| val.trim().to_string())
@@ -760,7 +798,7 @@ pub fn profiles_get_boot_state() -> Result<ProfilesBootState, String> {
                     .map(|p| p.id.clone());
 
                 // Auto-register current BIOVAULT_HOME as a profile if not found
-                if current.is_none() && normalized.exists() {
+                if !picker_mode && current.is_none() && normalized.exists() {
                     let email = read_home_email(&normalized);
                     let home_canon = canonicalize_best_effort(&normalized);
                     let home_str = home_canon.to_string_lossy().to_string();
@@ -790,10 +828,15 @@ pub fn profiles_get_boot_state() -> Result<ProfilesBootState, String> {
     if current.is_none() {
         current = store.current_profile_id.clone();
     }
+    if current.is_none() && !store.profiles.is_empty() {
+        // Auto-heal missing pointer to avoid unnecessary profile prompts after reload.
+        let fallback_id = store.profiles[0].id.clone();
+        store.current_profile_id = Some(fallback_id.clone());
+        let _ = save_store(&store);
+        current = Some(fallback_id);
+    }
     // Only show the picker UI when this process is actually running in picker mode (bootstrap),
     // or when explicitly requested (e.g. Settings -> Switch Profile).
-    let picker_mode = env::var_os("BIOVAULT_PROFILE_PICKER").is_some()
-        || env_flag_true("BIOVAULT_FORCE_PROFILE_PICKER");
     let should_show = picker_mode || store.force_picker_once;
     let in_picker_ui = should_show;
 

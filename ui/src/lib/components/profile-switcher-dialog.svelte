@@ -2,6 +2,7 @@
 	import { profilesStore, type ProfileSummary } from '$lib/stores/profiles.svelte'
 	import { syftboxAuthStore } from '$lib/stores/syftbox-auth.svelte'
 	import { invoke } from '@tauri-apps/api/core'
+	import { getAvatarToneClass } from '$lib/utils.js'
 	import * as Dialog from '$lib/components/ui/dialog/index.js'
 	import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js'
 	import * as Avatar from '$lib/components/ui/avatar/index.js'
@@ -174,7 +175,11 @@
 		if (profile.email) {
 			return profile.email.substring(0, 2).toUpperCase()
 		}
-		return '?'
+		return 'GU'
+	}
+
+	function getAvatarTone(profile: ProfileSummary): string {
+		return getAvatarToneClass(profile.email || `guest:${profile.id}`)
 	}
 
 	function getStatusBadge(profile: ProfileSummary) {
@@ -257,12 +262,12 @@
 								disabled={profile.is_current || switching}
 							>
 								<Avatar.Root class="size-10">
-									<Avatar.Fallback>{getInitials(profile)}</Avatar.Fallback>
+									<Avatar.Fallback class={getAvatarTone(profile)}>{getInitials(profile)}</Avatar.Fallback>
 								</Avatar.Root>
 
 								<div class="flex-1 min-w-0">
 									<div class="font-medium truncate">
-										{profile.email || '(Not set up)'}
+										{profile.email || 'Guest'}
 									</div>
 									<div
 										class="text-xs text-muted-foreground truncate flex items-center gap-1"
@@ -325,7 +330,7 @@
 		<AlertDialog.Header>
 			<AlertDialog.Title>Delete Profile?</AlertDialog.Title>
 			<AlertDialog.Description>
-				This will remove the profile "{profileToDelete?.email || 'Unknown'}" and delete its home
+				This will remove the profile "{profileToDelete?.email || 'Guest'}" and delete its home
 				folder. This action cannot be undone.
 			</AlertDialog.Description>
 		</AlertDialog.Header>

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core'
 	import { syftboxAuthStore } from '$lib/stores/syftbox-auth.svelte'
+	import { profilesStore } from '$lib/stores/profiles.svelte'
 	import * as Dialog from '$lib/components/ui/dialog/index.js'
 	import * as InputOTP from '$lib/components/ui/input-otp/index.js'
 	import { Button } from '$lib/components/ui/button/index.js'
@@ -48,10 +49,52 @@
 	let email = $state('')
 	let otp = $state('')
 	let loading = $state(false)
-	let error = $state<string | null>(null)
-	let recoveryPhrase = $state<string | null>(null)
-	let recoveryAcknowledged = $state(false)
-	let copied = $state(false)
+let error = $state<string | null>(null)
+let recoveryPhrase = $state<string | null>(null)
+let recoveryAcknowledged = $state(false)
+let copied = $state(false)
+let autoAttemptedForOpen = $state(false)
+let otpRequested = $state(false)
+
+function normalizedEmail(value: string): string {
+	return value.trim().toLowerCase()
+}
+
+function normalizedOtp(value: string): string {
+	return value.replace(/\D/g, '').trim()
+}
+
+async function loadKnownEmail(): Promise<string> {
+	try {
+		const settings = await invoke<{ email?: string }>('get_settings')
+		const candidate = (
+			settings?.email ||
+				syftboxAuthStore.email ||
+				profilesStore.currentProfile?.email ||
+				''
+			).trim()
+			return candidate
+		} catch {
+			return (syftboxAuthStore.email || profilesStore.currentProfile?.email || '').trim()
+		}
+	}
+
+async function maybeSkipToOtp() {
+	const knownEmail = await loadKnownEmail()
+	if (!knownEmail || !knownEmail.includes('@')) return
+	email = normalizedEmail(knownEmail)
+	step = 'otp'
+	otp = ''
+	error = null
+	otpRequested = false
+	try {
+		await syftboxAuthStore.requestOtp(email)
+		otpRequested = true
+	} catch (e) {
+		console.error('Auto request OTP failed:', e)
+		error = e instanceof Error ? e.message : String(e)
+	}
+}
 
 	function handleOpenChange(newOpen: boolean) {
 		// Don't allow closing during recovery step without acknowledgment
@@ -67,6 +110,7 @@
 				email = ''
 				otp = ''
 				error = null
+				otpRequested = false
 				recoveryPhrase = null
 				recoveryAcknowledged = false
 				copied = false
@@ -74,30 +118,46 @@
 		}
 	}
 
-	async function handleRequestOtp() {
-		if (!email.trim() || !email.includes('@')) {
-			error = 'Please enter a valid email address'
-			return
+	$effect(() => {
+		if (open && !autoAttemptedForOpen) {
+			autoAttemptedForOpen = true
+			step = 'email'
+			otp = ''
+			error = null
+			otpRequested = false
+			void maybeSkipToOtp()
 		}
+		if (!open) {
+			autoAttemptedForOpen = false
+		}
+	})
+
+async function handleRequestOtp() {
+	email = normalizedEmail(email)
+	if (!email || !email.includes('@')) {
+		error = 'Please enter a valid email address'
+		return
+	}
 
 		loading = true
 		error = null
 
-		try {
-			await syftboxAuthStore.requestOtp(email.trim())
-			
-			if (!syftboxAuthStore.isAuthEnabled) {
+	try {
+		await syftboxAuthStore.requestOtp(email)
+		otpRequested = true
+		
+		if (!syftboxAuthStore.isAuthEnabled) {
 				// Bypass OTP step in dev/test mode
 				console.log('Auth disabled, performing instant bypass...')
-				await syftboxAuthStore.submitOtp(email.trim(), '00000000')
+				await syftboxAuthStore.submitOtp(email, '00000000')
 				
 				step = 'success'
 				setTimeout(() => {
 					handleOpenChange(false)
 				}, 1500)
-			} else {
-				step = 'otp'
-			}
+		} else {
+			step = 'otp'
+		}
 		} catch (e) {
 			console.error('handleRequestOtp error:', e)
 			error = e instanceof Error ? e.message : String(e)
@@ -111,52 +171,49 @@
 		}
 	}
 
-	async function handleSubmitOtp() {
-		if (otp.length !== 8) {
-			error = 'Please enter the 8-digit code'
-			return
-		}
+async function handleSubmitOtp() {
+	const code = normalizedOtp(otp)
+	otp = code
+	email = normalizedEmail(email)
+	if (code.length !== 8) {
+		error = 'Please enter the 8-digit code'
+		return
+	}
 
-		loading = true
-		error = null
+	loading = true
+	error = null
 
-		try {
-			await syftboxAuthStore.submitOtp(email.trim(), otp)
+	try {
+		await syftboxAuthStore.submitOtp(email, code)
+		step = 'success'
+		setTimeout(() => {
+			handleOpenChange(false)
+		}, 500)
 
-			// After successful auth, generate/check key
+		// Run key setup in background so Verify stays fast.
+		void (async () => {
 			try {
 				const keyResult = await invoke<KeyOperationResult>('key_generate', {
-					email: email.trim(),
+					email,
 					force: false
 				})
-
 				if (keyResult.mnemonic) {
-					// New key was generated - show recovery phrase
-					recoveryPhrase = keyResult.mnemonic
-					step = 'recovery'
-				} else {
-					// Key already existed - go to success
-					step = 'success'
-					setTimeout(() => {
-						handleOpenChange(false)
-					}, 1500)
+					toast.info('Encryption key created', {
+						description: 'Open Settings → Security to back up your recovery phrase.'
+					})
 				}
 			} catch (keyError) {
-				console.error('Key generation error:', keyError)
-				// Key error shouldn't block sign-in, just go to success
-				step = 'success'
-				setTimeout(() => {
-					handleOpenChange(false)
-				}, 1500)
+				console.error('Background key generation error:', keyError)
 			}
-		} catch (e) {
-			console.error('handleSubmitOtp error:', e)
-			error = e instanceof Error ? e.message : 'Invalid verification code'
-			otp = ''
-		} finally {
-			loading = false
-		}
+		})()
+	} catch (e) {
+		console.error('handleSubmitOtp error:', e)
+		error = e instanceof Error ? e.message : 'Invalid verification code'
+		otp = ''
+	} finally {
+		loading = false
 	}
+}
 
 	async function handleCopyRecovery() {
 		if (recoveryPhrase) {
@@ -180,11 +237,12 @@
 		}, 1500)
 	}
 
-	function handleBack() {
-		step = 'email'
-		otp = ''
-		error = null
-	}
+function handleBack() {
+	step = 'email'
+	otp = ''
+	error = null
+	otpRequested = false
+}
 
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'Enter' && !loading) {
@@ -280,6 +338,11 @@
 				{#if error}
 					<p class="text-sm text-destructive text-center">{error}</p>
 				{/if}
+				{#if !otpRequested && !loading}
+					<p class="text-xs text-muted-foreground text-center">
+						Code not sent yet. Click <strong>Resend</strong> to request a fresh code.
+					</p>
+				{/if}
 
 				<p class="text-xs text-muted-foreground text-center">
 					Didn't receive the code?
@@ -299,7 +362,7 @@
 					<ArrowLeftIcon class="size-4" />
 					Back
 				</Button>
-				<Button onclick={handleSubmitOtp} disabled={loading || otp.length !== 8}>
+				<Button onclick={handleSubmitOtp} disabled={loading || otp.length !== 8 || !otpRequested}>
 					{#if loading}
 						<Loader2Icon class="size-4 animate-spin" />
 						Verifying...

@@ -4,10 +4,10 @@
 	import { goto } from '$app/navigation'
 	import { toast } from 'svelte-sonner'
 	import PageHeader from '$lib/components/page-header.svelte'
+	import CommunityDatasetCard from '$lib/components/community-dataset-card.svelte'
 	import { flowTemplates, templateColors, type FlowTemplate } from '$lib/data/flow-templates'
 	import * as Empty from '$lib/components/ui/empty/index.js'
 	import * as Card from '$lib/components/ui/card/index.js'
-	import * as Avatar from '$lib/components/ui/avatar/index.js'
 	import { Button } from '$lib/components/ui/button/index.js'
 	import { Input } from '$lib/components/ui/input/index.js'
 	import { Badge } from '$lib/components/ui/badge/index.js'
@@ -26,7 +26,6 @@
 	import DownloadIcon from '@lucide/svelte/icons/download'
 	import FileIcon from '@lucide/svelte/icons/file'
 	import SparklesIcon from '@lucide/svelte/icons/sparkles'
-	import RocketIcon from '@lucide/svelte/icons/rocket'
 	import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw'
 	import DnaIcon from '@lucide/svelte/icons/dna'
 	import ScanEyeIcon from '@lucide/svelte/icons/scan-eye'
@@ -61,6 +60,7 @@
 		missing_assets: number
 		downloaded_bytes: number
 		expected_bytes?: number
+		is_subscribed: boolean
 	}
 
 	interface NetworkDatasetScanResult {
@@ -79,28 +79,27 @@
 	let selectedForVerify = $state<DiscoveredDataset | null>(null)
 	let pinning = $state<string | null>(null)
 	let unpinning = $state<string | null>(null)
-	let localDatasetNames = $state<Set<string>>(new Set())
+	let subscribedDatasetKeys = $state<Set<string>>(new Set())
 
-	async function loadLocalDatasetNames() {
-		try {
-			const localDatasets = await invoke<any[]>('list_datasets_with_assets')
-			localDatasetNames = new Set(localDatasets.map((d) => d.dataset.name))
-		} catch (e) {
-			console.error('Failed to load local datasets:', e)
-		}
+	function datasetKey(owner: string, name: string): string {
+		return `${owner.toLowerCase()}::${name.toLowerCase()}`
 	}
 
 	async function pinDataset(dataset: DiscoveredDataset) {
 		if (!dataset.public_url) return
-		pinning = dataset.name
+		const key = datasetKey(dataset.owner, dataset.name)
+		pinning = key
+		subscribedDatasetKeys = new Set([...subscribedDatasetKeys, key])
 		try {
 			await invoke('subscribe_dataset', {
 				owner: dataset.owner,
 				name: dataset.name
 			})
 			toast.success(`Starred ${dataset.name}`)
-			await loadLocalDatasetNames()
 		} catch (e) {
+			const next = new Set(subscribedDatasetKeys)
+			next.delete(key)
+			subscribedDatasetKeys = next
 			toast.error(`Failed to star dataset: ${e}`)
 		} finally {
 			pinning = null
@@ -108,12 +107,16 @@
 	}
 
 	async function unpinDataset(dataset: DiscoveredDataset) {
-		unpinning = dataset.name
+		const key = datasetKey(dataset.owner, dataset.name)
+		unpinning = key
+		const next = new Set(subscribedDatasetKeys)
+		next.delete(key)
+		subscribedDatasetKeys = next
 		try {
-			await invoke('delete_dataset', { name: dataset.name })
+			await invoke('unsubscribe_dataset', { owner: dataset.owner, name: dataset.name })
 			toast.success(`Unstarred ${dataset.name}`)
-			await loadLocalDatasetNames()
 		} catch (e) {
+			subscribedDatasetKeys = new Set([...subscribedDatasetKeys, key])
 			toast.error(`Failed to unstar dataset: ${e}`)
 		} finally {
 			unpinning = null
@@ -218,9 +221,15 @@
 			const result = await invoke<NetworkDatasetScanResult>('network_scan_datasets')
 			datasets = result.datasets
 			currentIdentity = result.current_identity
+			subscribedDatasetKeys = new Set(
+				result.datasets
+					.filter((d) => d.is_subscribed)
+					.map((d) => datasetKey(d.owner, d.name))
+			)
 		} catch (e) {
 			console.error('Failed to load datasets:', e)
 			datasets = []
+			subscribedDatasetKeys = new Set()
 		}
 	}
 
@@ -231,7 +240,7 @@
 	}
 
 	onMount(async () => {
-		await Promise.all([loadDatasets(), loadInstalledPipelines(), loadLocalDatasetNames()])
+		await Promise.all([loadDatasets(), loadInstalledPipelines()])
 		loading = false
 	})
 
@@ -243,9 +252,6 @@
 		return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
 	}
 
-	function getInitials(email: string): string {
-		return email.substring(0, 2).toUpperCase()
-	}
 </script>
 
 <div class="flex h-full flex-col">
@@ -366,110 +372,34 @@
 					</Card.Root>
 				{/snippet}
 
-				{#snippet datasetCard(dataset: DiscoveredDataset)}
-					<Card.Root class="hover:border-primary/50 transition-colors">
-						<Card.Header class="pb-3">
-							<div class="flex items-start justify-between gap-2">
-								<div class="flex items-center gap-3">
-									{#if dataset.is_own}
-										<div class="size-10 rounded-lg bg-primary/10 flex items-center justify-center">
-											<DatabaseIcon class="size-5 text-primary" />
-										</div>
-									{:else}
-										<Avatar.Root class="size-10">
-											<Avatar.Fallback>{getInitials(dataset.owner)}</Avatar.Fallback>
-										</Avatar.Root>
-									{/if}
-									<div>
-										<Card.Title class="text-base">{dataset.name}</Card.Title>
-										<p class="text-xs text-muted-foreground truncate max-w-[150px]" title={dataset.owner}>
-											{dataset.is_own ? 'by you' : dataset.owner}
-										</p>
+				{#snippet ownDatasetCard(dataset: DiscoveredDataset)}
+					<Card.Root class="rounded-lg border bg-card p-4 transition-colors hover:border-primary/40">
+						<div class="space-y-3">
+							<div class="flex items-start justify-between gap-3">
+								<div class="flex items-center gap-2.5 min-w-0">
+									<div class="flex size-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+										<DatabaseIcon class="size-4" />
+									</div>
+									<div class="min-w-0">
+										<Card.Title class="truncate text-sm">{dataset.name}</Card.Title>
+										<p class="truncate text-xs text-muted-foreground" title={dataset.owner}>by you</p>
 									</div>
 								</div>
-								<div class="flex items-center gap-1">
-									{#if dataset.is_own}
-										<Badge variant="secondary">Yours</Badge>
-									{:else if dataset.is_trusted}
-										<Badge variant="outline" class="text-emerald-600 border-emerald-200 bg-emerald-50">
-											<ShieldCheckIcon class="size-3 mr-1" />
-											Trusted
-										</Badge>
-									{/if}
-								</div>
+								<Badge variant="secondary" class="h-5 text-[10px]">Yours</Badge>
 							</div>
-						</Card.Header>
-						<Card.Content>
 							{#if dataset.description}
-								<p class="text-sm text-muted-foreground mb-3 line-clamp-2">{dataset.description}</p>
+								<p class="line-clamp-2 min-h-9 text-sm text-muted-foreground">{dataset.description}</p>
 							{/if}
-							<div class="flex items-center justify-between">
-								<div class="flex items-center gap-4 text-xs text-muted-foreground">
-									<span class="flex items-center gap-1">
+							<div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+								<span class="inline-flex items-center gap-1">
 										<FileIcon class="size-3" />
 										{dataset.total_assets} files
-									</span>
-									{#if dataset.expected_bytes || dataset.downloaded_bytes}
-										<span>{formatFileSize(dataset.expected_bytes || dataset.downloaded_bytes)}</span>
-									{/if}
-								</div>
-								{#if !dataset.is_own}
-									{#if dataset.available}
-										<Badge variant="secondary" class="text-xs">
-											<DownloadIcon class="size-3 mr-1" />
-											Available
-										</Badge>
-									{:else if dataset.missing_assets > 0}
-										<Badge variant="outline" class="text-xs">
-											{dataset.present_assets}/{dataset.total_assets} synced
-										</Badge>
-									{/if}
+								</span>
+								{#if dataset.expected_bytes || dataset.downloaded_bytes}
+									<span>{formatFileSize(dataset.expected_bytes || dataset.downloaded_bytes)}</span>
 								{/if}
 							</div>
-							{#if !dataset.is_own}
-								<div class="flex items-center gap-2 mt-4 pt-4 border-t">
-									<Button
-										variant="outline"
-										size="sm"
-										class="flex-1 text-xs"
-										onclick={() => openVerifyDialog(dataset)}
-									>
-										<RocketIcon class="size-3 mr-1" />
-										Verify Mock
-									</Button>
-									{#if localDatasetNames.has(dataset.name)}
-										<Button
-											variant="secondary"
-											size="sm"
-											class="text-xs gap-1.5"
-											onclick={() => unpinDataset(dataset)}
-											disabled={unpinning === dataset.name}
-										>
-											{#if unpinning === dataset.name}
-												<Loader2Icon class="size-3 animate-spin" />
-											{:else}
-												<StarIcon class="size-3 fill-primary text-primary" />
-												Starred
-											{/if}
-										</Button>
-									{:else}
-										<Button
-											variant="outline"
-											size="sm"
-											class="text-xs"
-											onclick={() => pinDataset(dataset)}
-											disabled={pinning === dataset.name}
-										>
-											{#if pinning === dataset.name}
-												<Loader2Icon class="size-3 animate-spin" />
-											{:else}
-												<StarIcon class="size-3" />
-											{/if}
-										</Button>
-									{/if}
-								</div>
-							{/if}
-						</Card.Content>
+						</div>
 					</Card.Root>
 				{/snippet}
 
@@ -497,7 +427,7 @@
 							</h3>
 							<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
 								{#each ownDatasets as dataset}
-									{@render datasetCard(dataset)}
+									{@render ownDatasetCard(dataset)}
 								{/each}
 							</div>
 						</div>
@@ -512,7 +442,23 @@
 							</h3>
 							<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
 								{#each communityDatasets as dataset}
-									{@render datasetCard(dataset)}
+									<CommunityDatasetCard
+										name={dataset.name}
+										owner={dataset.owner}
+										description={dataset.description}
+										totalAssets={dataset.total_assets}
+										presentAssets={dataset.present_assets}
+										expectedBytes={dataset.expected_bytes}
+										downloadedBytes={dataset.downloaded_bytes}
+										available={dataset.available}
+										starred={subscribedDatasetKeys.has(datasetKey(dataset.owner, dataset.name))}
+										pinning={pinning === datasetKey(dataset.owner, dataset.name)}
+										unpinning={unpinning === datasetKey(dataset.owner, dataset.name)}
+										showVerifyMock={true}
+										onVerifyMock={() => openVerifyDialog(dataset)}
+										onStar={() => pinDataset(dataset)}
+										onUnstar={() => unpinDataset(dataset)}
+									/>
 								{/each}
 							</div>
 						</div>
@@ -557,7 +503,27 @@
 					{:else}
 						<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
 							{#each filteredDatasets() as dataset}
-								{@render datasetCard(dataset)}
+								{#if dataset.is_own}
+									{@render ownDatasetCard(dataset)}
+								{:else}
+									<CommunityDatasetCard
+										name={dataset.name}
+										owner={dataset.owner}
+										description={dataset.description}
+										totalAssets={dataset.total_assets}
+										presentAssets={dataset.present_assets}
+										expectedBytes={dataset.expected_bytes}
+										downloadedBytes={dataset.downloaded_bytes}
+										available={dataset.available}
+										starred={subscribedDatasetKeys.has(datasetKey(dataset.owner, dataset.name))}
+										pinning={pinning === datasetKey(dataset.owner, dataset.name)}
+										unpinning={unpinning === datasetKey(dataset.owner, dataset.name)}
+										showVerifyMock={true}
+										onVerifyMock={() => openVerifyDialog(dataset)}
+										onStar={() => pinDataset(dataset)}
+										onUnstar={() => unpinDataset(dataset)}
+									/>
+								{/if}
 							{/each}
 						</div>
 					{/if}
