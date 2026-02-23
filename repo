@@ -548,7 +548,7 @@ ensure_syftbox_crypto_submodule() {
 
   echo -e "${CYAN}→ ${repo} submodules${NC}"
   git -C "$repo" submodule sync --recursive >/dev/null 2>&1 || true
-  if ! git -C "$repo" submodule update --init --recursive; then
+  if ! git -C "$repo" submodule update --init --recursive --depth 1; then
     echo -e "${RED}✗ ${repo} submodule update failed${NC}" >&2
     return 1
   fi
@@ -566,6 +566,8 @@ ensure_syqure_submodules() {
 
   echo -e "${CYAN}→ ${repo} submodules${NC}"
   git -C "$repo" submodule sync --recursive >/dev/null 2>&1 || true
+  git -C "$repo" config submodule.codon.shallow true >/dev/null 2>&1 || true
+  git -C "$repo" config submodule.sequre.shallow true >/dev/null 2>&1 || true
   git -C "$repo" config submodule.external/llvm-project.shallow true >/dev/null 2>&1 || true
   git -C "$repo" config submodule.external/llvm-project.partialClone true >/dev/null 2>&1 || true
   git -C "$repo" config submodule.external/llvm-project.partialCloneFilter blob:none >/dev/null 2>&1 || true
@@ -577,11 +579,8 @@ ensure_syqure_submodules() {
   fi
 
   if ! git -C "$repo" submodule update --init --recursive --depth 1 -- codon sequre; then
-    echo -e "${YELLOW}WARN: ${repo} shallow codon/sequre update failed; retrying full depth${NC}"
-    if ! git -C "$repo" submodule update --init --recursive -- codon sequre; then
-      echo -e "${RED}✗ ${repo} submodule update failed${NC}" >&2
-      return 1
-    fi
+    echo -e "${RED}✗ ${repo} shallow submodule update failed${NC}" >&2
+    return 1
   fi
 }
 

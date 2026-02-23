@@ -9,7 +9,7 @@ cd "$ROOT_DIR"
 # Only run in repo-managed workspace
 if [[ ! -d ".repo" ]]; then
     echo "Not a repo-managed workspace - using git submodules instead"
-    git submodule update --init --recursive 2>/dev/null || true
+    git submodule update --init --recursive --depth 1 2>/dev/null || true
     exit 0
 fi
 
@@ -72,9 +72,9 @@ echo "=== syftbox-crypto submodules ==="
 if [[ -d "syftbox-crypto" ]]; then
     if [[ -f "syftbox-crypto/.gitmodules" ]]; then
         git -C "syftbox-crypto" submodule sync --recursive >/dev/null 2>&1 || true
-        if ! git -C "syftbox-crypto" submodule update --init --recursive; then
+        if ! git -C "syftbox-crypto" submodule update --init --recursive --depth 1; then
             echo "  NOTE: syftbox-crypto submodule update failed"
-            echo "        Run: cd syftbox-crypto && git submodule update --init --recursive"
+            echo "        Run: cd syftbox-crypto && git submodule update --init --recursive --depth 1"
         fi
     else
         echo "  (no syftbox-crypto submodules)"
