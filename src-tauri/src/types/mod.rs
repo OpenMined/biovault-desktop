@@ -47,6 +47,9 @@ pub struct Settings {
     /// Blocked agent bridge commands
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub agent_bridge_blocklist: Vec<String>,
+    /// User preference for SyftBox online state (auto-start daemon on app launch)
+    #[serde(default)]
+    pub syftbox_prefer_online: bool,
 }
 
 fn default_agent_bridge_enabled() -> bool {
@@ -78,6 +81,7 @@ impl Default for Settings {
             agent_bridge_http_port: default_agent_bridge_http_port(),
             agent_bridge_token: None,
             agent_bridge_blocklist: Vec::new(),
+            syftbox_prefer_online: false,
         }
     }
 }
@@ -247,6 +251,39 @@ pub struct MessageThreadSummary {
     pub last_message_at: Option<String>,
     pub last_message_preview: String,
     pub has_module: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_name: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct CollaborationSpace {
+    pub space_id: String,
+    pub thread_id: String,
+    pub name: String,
+    pub participants: Vec<String>,
+    pub member_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_activity_at: Option<String>,
+    pub last_message_preview: String,
+    pub unread_count: usize,
+}
+
+#[derive(Serialize, Clone)]
+pub struct ContactTimelineEvent {
+    pub event_id: String,
+    pub message_id: String,
+    pub thread_id: String,
+    pub created_at: String,
+    pub kind: String,
+    pub direction: String,
+    pub from: String,
+    pub to: String,
+    pub summary: String,
+    pub body: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

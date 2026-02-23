@@ -4,12 +4,22 @@
 	"version": "0.1.39",
 	"identifier": "org.openmined.biovault-desktop",
 	"build": {
-		"frontendDist": "../src"
+		"frontendDist": "../ui"
 	},
 	"app": {
 		"withGlobalTauri": true,
-		"windows": [],
-
+		"windows": [
+			{
+				"title": "BioVault",
+				"width": 1100,
+				"height": 700,
+				"minWidth": 1100,
+				"minHeight": 700,
+				"devtools": true,
+				"titleBarStyle": "Overlay",
+				"hiddenTitle": true
+			}
+		],
 		"security": {
 			"csp": null,
 			"capabilities": [
@@ -18,6 +28,8 @@
 					"windows": ["main"],
 					"permissions": [
 						"core:default",
+						"core:window:default",
+						"core:window:allow-start-dragging",
 						"dialog:allow-open",
 						"dialog:allow-confirm",
 						"dialog:allow-ask",

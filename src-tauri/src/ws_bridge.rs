@@ -333,7 +333,9 @@ fn get_commands_list() -> serde_json::Value {
         cmd_long("sync_messages_with_failures", "messages", false),
         cmd_long("refresh_messages_batched", "messages", false),
         cmd("list_message_threads", "messages", true),
+        cmd("list_spaces", "messages", true),
         cmd("get_thread_messages", "messages", true),
+        cmd("get_contact_timeline", "messages", true),
         cmd("send_message", "messages", false),
         cmd("mark_thread_as_read", "messages", false),
         cmd("delete_message", "messages", false),
@@ -373,6 +375,7 @@ fn get_commands_list() -> serde_json::Value {
         cmd_async("get_runs_base_dir", "flows", true),
         cmd_async("load_flow_editor", "flows", true),
         cmd_async("save_flow_editor", "flows", false),
+        cmd_async("save_flow_yaml", "flows", false),
         cmd_async("delete_flow", "flows", false),
         cmd_async("validate_flow", "flows", true),
         cmd_async("delete_flow_run", "flows", false),
@@ -469,6 +472,7 @@ fn get_commands_list() -> serde_json::Value {
         cmd("add_dataset_to_session", "sessions", false),
         cmd("remove_dataset_from_session", "sessions", false),
         cmd("open_session_folder", "sessions", false),
+        cmd("add_files_to_session", "sessions", false),
         // Session Jupyter
         cmd("get_session_jupyter_status", "session_jupyter", true),
         cmd_long("launch_session_jupyter", "session_jupyter", false),
@@ -2030,6 +2034,13 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             let result = crate::list_message_threads(scope, limit).map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
+        "list_spaces" => {
+            let limit: Option<usize> = args
+                .get("limit")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let result = crate::list_spaces(limit).map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
         "get_thread_messages" => {
             let thread_id: String = serde_json::from_value(
                 args.get("threadId")
@@ -2039,6 +2050,19 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             )
             .map_err(|e| format!("Failed to parse threadId: {}", e))?;
             let result = crate::get_thread_messages(thread_id).map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_contact_timeline" => {
+            let contact: String = serde_json::from_value(
+                args.get("contact")
+                    .cloned()
+                    .ok_or_else(|| "Missing contact".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse contact: {}", e))?;
+            let limit: Option<usize> = args
+                .get("limit")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let result = crate::get_contact_timeline(contact, limit).map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "send_message" => {
@@ -3664,6 +3688,31 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                     .await?;
             Ok(serde_json::to_value(result).unwrap())
         }
+        "save_flow_yaml" => {
+            let flow_id: Option<i64> = args
+                .get("flowId")
+                .or_else(|| args.get("flow_id"))
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok());
+            let flow_path: String = serde_json::from_value(
+                args.get("flowPath")
+                    .or_else(|| args.get("flow_path"))
+                    .cloned()
+                    .ok_or_else(|| "Missing flowPath".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse flowPath: {}", e))?;
+            let raw_yaml: String = serde_json::from_value(
+                args.get("rawYaml")
+                    .or_else(|| args.get("raw_yaml"))
+                    .cloned()
+                    .ok_or_else(|| "Missing rawYaml".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse rawYaml: {}", e))?;
+            let result =
+                crate::commands::flows::save_flow_yaml(state.clone(), flow_id, flow_path, raw_yaml)
+                    .await?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
         "delete_flow" => {
             let flow_id: i64 = serde_json::from_value(
                 args.get("flowId")
@@ -3838,6 +3887,24 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
             crate::commands::sessions::open_session_folder(session_id)?;
             Ok(serde_json::Value::Null)
+        }
+        "add_files_to_session" => {
+            let session_id: String = serde_json::from_value(
+                args.get("sessionId")
+                    .or_else(|| args.get("session_id"))
+                    .cloned()
+                    .ok_or_else(|| "Missing sessionId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse sessionId: {}", e))?;
+            let file_paths: Vec<String> = serde_json::from_value(
+                args.get("filePaths")
+                    .or_else(|| args.get("file_paths"))
+                    .cloned()
+                    .ok_or_else(|| "Missing filePaths".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse filePaths: {}", e))?;
+            let result = crate::commands::sessions::add_files_to_session(session_id, file_paths)?;
+            Ok(serde_json::to_value(result).unwrap())
         }
 
         // =====================================================================

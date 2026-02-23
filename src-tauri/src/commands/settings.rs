@@ -14,7 +14,7 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri_plugin_autostart::ManagerExt;
 
-const PLACEHOLDER_EMAIL: &str = "setup@pending";
+pub const PLACEHOLDER_EMAIL: &str = "setup@pending";
 
 fn normalize_server_url(url: &str) -> String {
     let trimmed = url.trim();
@@ -1142,6 +1142,18 @@ pub fn set_autostart_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(),
             .disable()
             .map_err(|e| format!("Failed to disable autostart: {}", e))
     }
+}
+
+#[tauri::command]
+pub fn set_syftbox_prefer_online(enabled: bool) -> Result<(), String> {
+    let mut settings = get_settings()?;
+    settings.syftbox_prefer_online = enabled;
+    save_settings(settings)?;
+    crate::desktop_log!(
+        "⚙️ set_syftbox_prefer_online: {}",
+        if enabled { "true" } else { "false" }
+    );
+    Ok(())
 }
 
 #[cfg(test)]

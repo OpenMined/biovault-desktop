@@ -620,10 +620,9 @@ pub fn create_session(request: CreateSessionRequest) -> Result<Session, String> 
                 &request_file,
                 serde_json::to_string_pretty(&invitation).unwrap(),
             ) {
-                eprintln!("Warning: Failed to write session invitation: {}", e);
+                crate::desktop_log!("⚠️ Failed to write session invitation: {}", e);
             } else {
-                println!("📨 Session invitation sent to {}", peer_email);
-                println!("   Path: {:?}", request_file);
+                crate::desktop_log!("📨 Session invitation sent to {}", peer_email);
             }
         }
 
@@ -692,10 +691,9 @@ pub fn update_session_peer(session_id: String, peer: Option<String>) -> Result<S
                 &request_file,
                 serde_json::to_string_pretty(&invitation).unwrap(),
             ) {
-                eprintln!("Warning: Failed to write session invitation: {}", e);
+                crate::desktop_log!("⚠️ Failed to write session invitation: {}", e);
             } else {
-                println!("📨 Session invitation sent to {}", peer_email);
-                println!("   Path: {:?}", request_file);
+                crate::desktop_log!("📨 Session invitation sent to {}", peer_email);
             }
         }
 
@@ -996,6 +994,115 @@ pub fn open_session_folder(session_id: String) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn unique_destination_path(target_dir: &Path, file_name: &str) -> PathBuf {
+    let base = target_dir.join(file_name);
+    if !base.exists() {
+        return base;
+    }
+
+    let src_path = Path::new(file_name);
+    let stem = src_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("file");
+    let ext = src_path.extension().and_then(|s| s.to_str());
+
+    for i in 1..10_000 {
+        let candidate_name = if let Some(ext) = ext {
+            format!("{}_{}.{}", stem, i, ext)
+        } else {
+            format!("{}_{}", stem, i)
+        };
+        let candidate = target_dir.join(candidate_name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+
+    target_dir.join(format!("{}_copy", stem))
+}
+
+fn copy_path_into_dir(source: &Path, target_dir: &Path) -> Result<Vec<String>, String> {
+    if !source.exists() {
+        return Err(format!("Path does not exist: {}", source.display()));
+    }
+
+    if source.is_file() {
+        let file_name = source
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| format!("Invalid filename: {}", source.display()))?;
+        let dest = unique_destination_path(target_dir, file_name);
+        fs::copy(source, &dest)
+            .map_err(|e| format!("Failed to copy {}: {}", source.display(), e))?;
+        return Ok(vec![dest.to_string_lossy().to_string()]);
+    }
+
+    if source.is_dir() {
+        let dir_name = source
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| format!("Invalid directory name: {}", source.display()))?;
+        let root_dest = unique_destination_path(target_dir, dir_name);
+        fs::create_dir_all(&root_dest)
+            .map_err(|e| format!("Failed to create {}: {}", root_dest.display(), e))?;
+
+        let mut copied = Vec::new();
+        for entry in fs::read_dir(source)
+            .map_err(|e| format!("Failed to read {}: {}", source.display(), e))?
+        {
+            let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+            let child = entry.path();
+            if child.is_file() {
+                let name = child
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .ok_or_else(|| format!("Invalid filename: {}", child.display()))?;
+                let dest = unique_destination_path(&root_dest, name);
+                fs::copy(&child, &dest)
+                    .map_err(|e| format!("Failed to copy {}: {}", child.display(), e))?;
+                copied.push(dest.to_string_lossy().to_string());
+            } else if child.is_dir() {
+                let nested = copy_path_into_dir(&child, &root_dest)?;
+                copied.extend(nested);
+            }
+        }
+        return Ok(copied);
+    }
+
+    Err(format!("Unsupported path type: {}", source.display()))
+}
+
+#[tauri::command]
+pub fn add_files_to_session(session_id: String, file_paths: Vec<String>) -> Result<Vec<String>, String> {
+    if file_paths.is_empty() {
+        return Err("No files provided".to_string());
+    }
+    if !session_exists(&session_id)? {
+        return Err("Session not found".to_string());
+    }
+
+    let session_dir = get_sessions_dir().join(&session_id);
+    fs::create_dir_all(&session_dir)
+        .map_err(|e| format!("Failed to create session directory: {}", e))?;
+
+    let mut copied_paths = Vec::new();
+    for path in file_paths {
+        let src = PathBuf::from(path.trim());
+        if src.as_os_str().is_empty() {
+            continue;
+        }
+        let copied = copy_path_into_dir(&src, &session_dir)?;
+        copied_paths.extend(copied);
+    }
+
+    if copied_paths.is_empty() {
+        return Err("No files were copied".to_string());
+    }
+
+    Ok(copied_paths)
 }
 
 // Session Invitation types

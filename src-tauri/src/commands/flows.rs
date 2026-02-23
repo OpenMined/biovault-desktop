@@ -731,6 +731,7 @@ pub struct FlowEditorPayload {
     pub flow_id: Option<i64>,
     pub flow_path: String,
     pub spec: Option<FlowSpec>,
+    pub raw_yaml: Option<String>,
     pub modules: Vec<ModuleInfo>, // Available modules for dropdown
 }
 
@@ -739,6 +740,23 @@ pub struct ModuleInfo {
     pub id: i64,
     pub name: String,
     pub path: String,
+    #[serde(default)]
+    pub inputs: Vec<ModulePortInfo>,
+    #[serde(default)]
+    pub outputs: Vec<ModulePortInfo>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ModulePortInfo {
+    pub name: String,
+    #[serde(default)]
+    pub raw_type: String,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub required: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1159,6 +1177,67 @@ fn module_yaml_exists(module_root: &Path) -> bool {
     module_root.join("module.yaml").exists() || module_root.join("module.yml").exists()
 }
 
+fn resolve_module_yaml_path(module_root: &Path) -> Option<PathBuf> {
+    if module_root.is_file() {
+        let file_name = module_root.file_name().and_then(|n| n.to_str())?;
+        if matches!(file_name, "module.yaml" | "module.yml") {
+            return Some(module_root.to_path_buf());
+        }
+        return None;
+    }
+    let yaml = module_root.join("module.yaml");
+    if yaml.exists() {
+        return Some(yaml);
+    }
+    let yml = module_root.join("module.yml");
+    if yml.exists() {
+        return Some(yml);
+    }
+    None
+}
+
+fn load_module_ports(module_path: &str) -> (Vec<ModulePortInfo>, Vec<ModulePortInfo>) {
+    let path = PathBuf::from(module_path);
+    let Some(yaml_path) = resolve_module_yaml_path(&path) else {
+        return (Vec::new(), Vec::new());
+    };
+
+    let Ok(content) = fs::read_to_string(&yaml_path) else {
+        return (Vec::new(), Vec::new());
+    };
+    let Ok(module_file) = ModuleFile::parse_yaml(&content) else {
+        return (Vec::new(), Vec::new());
+    };
+    let Ok(spec) = module_file.to_module_spec() else {
+        return (Vec::new(), Vec::new());
+    };
+
+    let inputs = spec
+        .inputs
+        .into_iter()
+        .map(|item| ModulePortInfo {
+            name: item.name,
+            raw_type: item.raw_type,
+            path: item.path,
+            description: item.description,
+            // Module inputs should be considered required unless the module itself handles defaults.
+            required: true,
+        })
+        .collect::<Vec<_>>();
+    let outputs = spec
+        .outputs
+        .into_iter()
+        .map(|item| ModulePortInfo {
+            name: item.name,
+            raw_type: item.raw_type,
+            path: item.path,
+            description: item.description,
+            required: false,
+        })
+        .collect::<Vec<_>>();
+    (inputs, outputs)
+}
+
 fn missing_local_module_paths(source_root: &Path, flow: &FlowFile) -> Vec<String> {
     let mut paths: Vec<String> = Vec::new();
 
@@ -1413,6 +1492,18 @@ pub async fn create_flow(
 
         // Preserve full flow directory contents (including local modules/assets).
         copy_local_flow_dir(source_parent, &managed_flow_dir)?;
+
+        // Register modules defined in spec.modules dict (new canonical FlowFile approach).
+        // This complements the legacy modules/ subdirectory scan below.
+        {
+            let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+            biovault::cli::commands::module_management::register_flow_modules_from_dir(
+                &managed_flow_dir,
+                &db,
+                overwrite,
+            )
+            .map_err(|e| e.to_string())?;
+        }
 
         // Register any bundled modules (mirroring import_flow_from_request behaviour)
         let modules_source = source_parent.join("modules");
@@ -1773,10 +1864,15 @@ pub async fn load_flow_editor(
 
     let modules = modules_list
         .iter()
-        .map(|p| ModuleInfo {
-            id: p.id,
-            name: p.name.clone(),
-            path: p.module_path.clone(),
+        .map(|p| {
+            let (inputs, outputs) = load_module_ports(&p.module_path);
+            ModuleInfo {
+                id: p.id,
+                name: p.name.clone(),
+                path: p.module_path.clone(),
+                inputs,
+                outputs,
+            }
         })
         .collect::<Vec<_>>();
 
@@ -1784,6 +1880,7 @@ pub async fn load_flow_editor(
         flow_id,
         flow_path: path.to_string_lossy().to_string(),
         spec,
+        raw_yaml: fs::read_to_string(&yaml_path).ok(),
         modules,
     })
 }
@@ -1830,6 +1927,45 @@ pub async fn save_flow_editor(
             created_at: chrono::Local::now().to_rfc3339(),
             updated_at: chrono::Local::now().to_rfc3339(),
             spec: Some(spec), // Return the spec that was just saved
+        })
+    }
+}
+
+#[tauri::command]
+pub async fn save_flow_yaml(
+    state: tauri::State<'_, AppState>,
+    flow_id: Option<i64>,
+    flow_path: String,
+    raw_yaml: String,
+) -> Result<Flow, String> {
+    let path = PathBuf::from(&flow_path);
+    let yaml_path = path.join(FLOW_YAML_FILE);
+
+    let parsed = FlowFile::parse_yaml(&raw_yaml)
+        .map_err(|e| format!("Failed to parse flow.yaml content: {}", e))?;
+    fs::write(&yaml_path, raw_yaml).map_err(|e| format!("Failed to write flow.yaml: {}", e))?;
+
+    let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+
+    if let Some(id) = flow_id {
+        biovault_db.touch_flow(id).map_err(|e| e.to_string())?;
+        biovault_db
+            .get_flow(id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "Flow not found after update".to_string())
+    } else {
+        let flow_name = parsed.metadata.name.clone();
+        let id = biovault_db
+            .register_flow(&flow_name, &flow_path)
+            .map_err(|e| e.to_string())?;
+        let timestamp = chrono::Local::now().to_rfc3339();
+        Ok(Flow {
+            id,
+            name: flow_name,
+            flow_path: flow_path.clone(),
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+            spec: parsed.to_flow_spec().ok(),
         })
     }
 }
@@ -2091,7 +2227,7 @@ pub async fn run_flow_impl(
         // Skip for network datasets which don't exist in local DB
         if let Some(dataset_name) = dataset_name.clone() {
             if is_network_dataset {
-                eprintln!(
+                crate::desktop_log!(
                     "[flow] Skipping local DB lookup for network dataset '{}', using URLs instead",
                     dataset_name
                 );
@@ -2130,7 +2266,7 @@ pub async fn run_flow_impl(
 
                 // List-shaped datasets need URL selection, fall through to URL/file_id paths
                 if let ShapeExpr::List(inner_type) = &shape_expr {
-                    eprintln!(
+                    crate::desktop_log!(
                     "[flow] Dataset '{}' has List shape (item type: {:?}), using URL selection path",
                     dataset_name, inner_type
                 );

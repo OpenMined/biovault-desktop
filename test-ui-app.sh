@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PORT="${UI_PORT:-8082}"
+PORT="${UI_PORT:-5173}"
 MAX_PORT=8092
 LOG_FILE="${UNIFIED_LOG_FILE:-$ROOT_DIR/logs/unified-ui-app.log}"
 LOG_PORT="${UNIFIED_LOG_PORT:-9753}"
@@ -80,9 +80,16 @@ export BIOVAULT_PATH="$BV_PATH"
 export DEV_WS_BRIDGE=1
 export DEV_WS_BRIDGE_PORT="${DEV_WS_BRIDGE_PORT:-3333}"
 
+info "Starting Vite dev server on port ${PORT}"
+pushd "$ROOT_DIR/ui" >/dev/null
+npm run dev -- --host 127.0.0.1 --port "${PORT}" >>"$LOG_FILE" 2>&1 &
+VITE_PID=$!
+popd >/dev/null
+
 info "Starting Tauri dev server with WebSocket bridge"
 info "Tauri logs: $TAURI_LOG"
-npm run dev > "$TAURI_LOG" 2>&1 &
+./scripts/ensure-bundled-deps.sh >/dev/null 2>&1
+npm run tauri -- dev --config "{\"build\": {\"devUrl\": \"http://localhost:${PORT}\", \"frontendDist\": \"../ui/build\"}}" > "$TAURI_LOG" 2>&1 &
 TAURI_PID=$!
 
 # Wait for WebSocket server to be ready
@@ -115,15 +122,9 @@ if [[ "$WS_READY" -ne 1 ]]; then
     exit 1
 fi
 
-info "Starting static server on port ${PORT}"
-pushd "$ROOT_DIR/src" >/dev/null
-python3 -m http.server "$PORT" >>"$LOG_FILE" 2>&1 &
-SERVER_PID=$!
-popd >/dev/null
-
 cleanup() {
-    info "Stopping static server"
-    kill "$SERVER_PID" 2>/dev/null || true
+    info "Stopping Vite dev server"
+    kill "$VITE_PID" 2>/dev/null || true
     info "Stopping Tauri dev server"
     kill "$TAURI_PID" 2>/dev/null || true
     if [[ -n "${LOGGER_PID:-}" ]]; then
@@ -145,7 +146,7 @@ export UNIFIED_LOG_WS="$UNIFIED_LOG_WS_URL"
 export USE_REAL_INVOKE=true
 
 if ((${#FORWARD_ARGS[@]} == 0)); then
-    UI_PORT="$PORT" UI_BASE_URL="http://localhost:${PORT}" npm run test:ui | tee -a "$LOG_FILE"
+    UI_PORT="$PORT" UI_BASE_URL="http://127.0.0.1:${PORT}" npm run test:ui | tee -a "$LOG_FILE"
 else
-    UI_PORT="$PORT" UI_BASE_URL="http://localhost:${PORT}" npm run test:ui -- "${FORWARD_ARGS[@]}" | tee -a "$LOG_FILE"
+    UI_PORT="$PORT" UI_BASE_URL="http://127.0.0.1:${PORT}" npm run test:ui -- "${FORWARD_ARGS[@]}" | tee -a "$LOG_FILE"
 fi
