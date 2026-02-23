@@ -28,6 +28,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 	const flowState = {
 		flows: [],
 		currentFlow: null,
+		templateCatalog: null,
 		wizardStep: 0,
 		wizardData: {
 			name: '',
@@ -37,6 +38,77 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 		pendingDataRun: null,
 		dataRunModalOpen: false,
 		lastAutoOpenKey: null,
+	}
+
+	async function getFlowTemplateCatalog(forceRefresh = false) {
+		if (!forceRefresh && Array.isArray(flowState.templateCatalog)) {
+			return flowState.templateCatalog
+		}
+		const catalog = await invoke('get_flow_template_catalog')
+		flowState.templateCatalog = Array.isArray(catalog) ? catalog : []
+		return flowState.templateCatalog
+	}
+
+	function renderTemplateFlowCards(templates) {
+		if (!templates || templates.length === 0) {
+			return `
+				<div style="grid-column: 1 / -1; background: #ffffff; border: 1.5px dashed #cbd5e1; border-radius: 12px; padding: 18px; color: #64748b; font-size: 14px;">
+					No template flows are configured.
+				</div>
+				`
+		}
+
+		function normalizeHexColor(raw) {
+			if (typeof raw !== 'string') return null
+			const value = raw.trim()
+			if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(value)) return null
+			if (value.length === 7) return value.toLowerCase()
+			const [r, g, b] = value.slice(1).split('')
+			return `#${r}${r}${g}${g}${b}${b}`.toLowerCase()
+		}
+
+		function hexToRgb(hex) {
+			const normalized = normalizeHexColor(hex)
+			if (!normalized) return null
+			const value = normalized.slice(1)
+			return [
+				parseInt(value.slice(0, 2), 16),
+				parseInt(value.slice(2, 4), 16),
+				parseInt(value.slice(4, 6), 16),
+			]
+		}
+
+		function darkenHex(hex, ratio = 0.14) {
+			const rgb = hexToRgb(hex)
+			if (!rgb) return '#2563eb'
+			const amount = Math.max(0, Math.min(1, ratio))
+			const [r, g, b] = rgb.map((v) => Math.max(0, Math.round(v * (1 - amount))))
+			return `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`
+		}
+
+		return templates
+			.map((template) => {
+				const name = escapeHtml(template?.name || template?.id || 'Template Flow')
+				const description = escapeHtml(template?.description || 'Import this template flow')
+				const templateId = escapeHtml(template?.id || '')
+				const accent = normalizeHexColor(template?.color) || '#3b82f6'
+				const accentDark = darkenHex(accent)
+				const accentRgb = hexToRgb(accent) || [59, 130, 246]
+				return `
+					<button type="button" class="new-flow-template-card" data-template-id="${templateId}" style="--template-accent: ${accent}; --template-accent-rgb: ${accentRgb.join(', ')}; background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+						<div style="display: flex; align-items: center; gap: 12px;">
+							<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, ${accent} 0%, ${accentDark} 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+								<img src="assets/icons/workflow.svg" alt="Flow icon" style="width: 20px; height: 20px; filter: brightness(0) invert(1);">
+							</div>
+							<div style="flex: 1; min-width: 0;">
+								<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">${name}</div>
+								<div style="font-size: 13px; color: #64748b; line-height: 1.4;">${description}</div>
+							</div>
+						</div>
+					</button>
+				`
+			})
+			.join('')
 	}
 
 	const flowRuntimeDebugEnvKeys = [
@@ -2269,6 +2341,15 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 	}
 
 	async function showTemplateFlowPicker() {
+		let templateCatalog = []
+		try {
+			templateCatalog = await getFlowTemplateCatalog()
+		} catch (error) {
+			console.error('Failed to load flow template catalog:', error)
+		}
+
+		const templateCardsHtml = renderTemplateFlowCards(templateCatalog)
+
 		// Add CSS for the new flow modal if not exists
 		if (!document.getElementById('new-flow-modal-styles')) {
 			const style = document.createElement('style')
@@ -2297,12 +2378,12 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 				}
 				.new-flow-template-card {
 					transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-				}
-				.new-flow-template-card:hover {
-					transform: translateY(-2px);
-					box-shadow: 0 8px 24px rgba(37,99,235,0.15) !important;
-					border-color: #3b82f6 !important;
-				}
+					}
+					.new-flow-template-card:hover {
+						transform: translateY(-2px);
+						box-shadow: 0 8px 24px rgba(var(--template-accent-rgb, 37, 99, 235), 0.20) !important;
+						border-color: var(--template-accent, #3b82f6) !important;
+					}
 				.new-flow-template-card:active {
 					transform: translateY(0);
 				}
@@ -2368,116 +2449,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 							Template Flows
 						</h3>
 						<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px;">
-							<button type="button" class="new-flow-template-card" onclick="flowModule.importTemplateFlow('apol1')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
-								<div style="display: flex; align-items: center; gap: 12px;">
-									<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
-										<img src="assets/icons/dna.svg" alt="DNA icon" style="width: 20px; height: 20px; filter: brightness(0) invert(1);">
-									</div>
-									<div style="flex: 1; min-width: 0;">
-										<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">APOL1 Classifier</div>
-										<div style="font-size: 13px; color: #64748b; line-height: 1.4;">Genetic variant analysis</div>
-									</div>
-								</div>
-							</button>
-							<button type="button" class="new-flow-template-card" onclick="flowModule.importTemplateFlow('brca')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
-								<div style="display: flex; align-items: center; gap: 12px;">
-									<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
-										<img src="assets/icons/user-round.svg" alt="User icon" style="width: 20px; height: 20px; filter: brightness(0) invert(1);">
-									</div>
-									<div style="flex: 1; min-width: 0;">
-										<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">BRCA Classifier</div>
-										<div style="font-size: 13px; color: #64748b; line-height: 1.4;">Cancer risk assessment</div>
-									</div>
-								</div>
-							</button>
-							<button type="button" class="new-flow-template-card" onclick="flowModule.importTemplateFlow('herc2')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
-								<div style="display: flex; align-items: center; gap: 12px;">
-									<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
-										<img src="assets/icons/scan-eye.svg" alt="Scan eye icon" style="width: 20px; height: 20px; filter: brightness(0) invert(1);">
-									</div>
-									<div style="flex: 1; min-width: 0;">
-										<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">HERC2 Classifier</div>
-										<div style="font-size: 13px; color: #64748b; line-height: 1.4;">Pigmentation analysis</div>
-									</div>
-								</div>
-							</button>
-							<button type="button" class="new-flow-template-card" onclick="flowModule.importTemplateFlow('thalassemia')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
-								<div style="display: flex; align-items: center; gap: 12px;">
-									<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
-										<img src="assets/icons/dna.svg" alt="DNA icon" style="width: 20px; height: 20px; filter: brightness(0) invert(1);">
-									</div>
-									<div style="flex: 1; min-width: 0;">
-										<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">Thalassemia Classifier</div>
-										<div style="font-size: 13px; color: #64748b; line-height: 1.4;">Blood disorder variants</div>
-									</div>
-								</div>
-							</button>
-							<button type="button" class="new-flow-template-card" onclick="flowModule.importTemplateFlow('allele_freq')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
-								<div style="display: flex; align-items: center; gap: 12px;">
-									<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
-										<img src="assets/icons/dna.svg" alt="DNA icon" style="width: 20px; height: 20px; filter: brightness(0) invert(1);">
-									</div>
-									<div style="flex: 1; min-width: 0;">
-										<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">Allele Frequency</div>
-										<div style="font-size: 13px; color: #64748b; line-height: 1.4;">Genotype to allele frequency</div>
-									</div>
-								</div>
-							</button>
-							<button type="button" class="new-flow-template-card" onclick="flowModule.importTemplateFlow('multiparty')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
-								<div style="display: flex; align-items: center; gap: 12px;">
-									<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
-										<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
-											<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-											<circle cx="9" cy="7" r="4"></circle>
-											<path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-											<path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-										</svg>
-									</div>
-									<div style="flex: 1; min-width: 0;">
-										<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">Multiparty Demo</div>
-										<div style="font-size: 13px; color: #64748b; line-height: 1.4;">3-party collaborative flow</div>
-									</div>
-								</div>
-							</button>
-							<button type="button" class="new-flow-template-card" onclick="flowModule.importTemplateFlow('multiparty_allele_freq')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
-								<div style="display: flex; align-items: center; gap: 12px;">
-									<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
-										<img src="assets/icons/dna.svg" alt="DNA icon" style="width: 20px; height: 20px; filter: brightness(0) invert(1);">
-									</div>
-									<div style="flex: 1; min-width: 0;">
-										<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">Multiparty Allele Freq</div>
-										<div style="font-size: 13px; color: #64748b; line-height: 1.4;">MPC-secured allele frequency</div>
-									</div>
-								</div>
-							</button>
-							<button type="button" class="new-flow-template-card" onclick="flowModule.importTemplateFlow('syqure_demo')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
-								<div style="display: flex; align-items: center; gap: 12px;">
-									<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
-										<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
-											<rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-											<path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-										</svg>
-									</div>
-									<div style="flex: 1; min-width: 0;">
-										<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">Syqure Demo</div>
-										<div style="font-size: 13px; color: #64748b; line-height: 1.4;">MPC rsid aggregation demo</div>
-									</div>
-								</div>
-							</button>
-							<button type="button" class="new-flow-template-card" onclick="flowModule.importTemplateFlow('syqure_smoke_test')" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 2px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
-								<div style="display: flex; align-items: center; gap: 12px;">
-									<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
-										<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
-											<path d="M9 11l3 3L22 4"></path>
-											<path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
-										</svg>
-									</div>
-									<div style="flex: 1; min-width: 0;">
-										<div style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">Syqure Smoke Test</div>
-										<div style="font-size: 13px; color: #64748b; line-height: 1.4;">3-party secure aggregation smoke test</div>
-									</div>
-								</div>
-							</button>
+							${templateCardsHtml}
 						</div>
 					</div>
 
@@ -2514,6 +2486,14 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 		`
 
 		document.body.appendChild(modal)
+		modal.querySelectorAll('[data-template-id]').forEach((button) => {
+			button.addEventListener('click', () => {
+				const templateId = button.getAttribute('data-template-id')
+				if (templateId) {
+					importTemplateFlow(templateId)
+				}
+			})
+		})
 
 		// Handle backdrop click and escape key
 		const backdrop = modal.querySelector('.modal-backdrop')
@@ -2644,51 +2624,13 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 
 	async function importTemplateFlow(templateName) {
 		closeFlowPickerModal()
-
-		// Try to get local flow templates first (for development/testing)
-		let localTemplates = {}
-		try {
-			localTemplates = await invoke('get_local_flow_templates')
-			console.log('🔍 Found local flow templates:', localTemplates)
-		} catch (e) {
-			console.log('No local flow templates available, using GitHub URLs')
-		}
-
-		const templateUrls = {
-			apol1:
-				'https://github.com/OpenMined/bioscript/blob/main/examples/apol1/apol1-classifier/flow.yaml',
-			brca: 'https://github.com/OpenMined/bioscript/blob/main/examples/brca/brca-classifier/flow.yaml',
-			herc2:
-				'https://github.com/OpenMined/bioscript/blob/main/examples/herc2/herc2-classifier/flow.yaml',
-			thalassemia:
-				'https://github.com/OpenMined/bioscript/blob/main/examples/thalassemia/thalassemia-classifier/flow.yaml',
-			allele_freq: 'https://github.com/OpenMined/biovault/blob/main/flows/allele-freq/flow.yaml',
-			multiparty: 'https://github.com/OpenMined/biovault/blob/main/flows/multiparty/flow.yaml',
-			multiparty_allele_freq:
-				'https://github.com/OpenMined/biovault/blob/main/flows/multiparty-allele-freq/flow.yaml',
-			syqure_demo: 'https://github.com/OpenMined/biovault/blob/main/flows/syqure-demo/flow.yaml',
-			syqure_smoke_test:
-				'https://github.com/OpenMined/biovault/blob/main/flows/syqure-smoke-test/flow.yaml',
-		}
-
-		const templateNames = {
-			apol1: 'APOL1 Classifier',
-			brca: 'BRCA Classifier',
-			herc2: 'HERC2 Classifier',
-			thalassemia: 'Thalassemia Classifier',
-			allele_freq: 'Allele Frequency',
-			multiparty: 'Multiparty Demo',
-			multiparty_allele_freq: 'Multiparty Allele Freq',
-			syqure_demo: 'Syqure Demo',
-			syqure_smoke_test: 'Syqure Smoke Test',
-		}
-
-		// Use local path if available, otherwise use GitHub URL
-		const url = localTemplates[templateName] || templateUrls[templateName]
-		if (!url) {
+		const templateCatalog = await getFlowTemplateCatalog()
+		const template = templateCatalog.find((entry) => entry.id === templateName)
+		if (!template || !template.source) {
 			alert('Invalid template selected')
 			return
 		}
+		const source = template.source
 
 		// Show loading state
 		const loadingHtml = `
@@ -2702,7 +2644,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 							</svg>
 						</div>
 						<h3 style="margin: 0 0 8px 0; font-size: 16px; font-weight: 600; color: #111827;">
-							Importing ${templateNames[templateName] || templateName.toUpperCase()} Flow...
+							Importing ${escapeHtml(template.name || templateName)} Flow...
 						</h3>
 						<p style="margin: 0; font-size: 14px; color: #6b7280;">
 							Downloading flow and all dependencies
@@ -2722,7 +2664,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 		try {
 			// Use overwrite=true for template flows since they're predefined
 			// and user explicitly wants this specific template
-			await submitFlowURL(true, url)
+			await submitFlowURL(true, source)
 			const loadingModal = document.getElementById('flow-loading-modal')
 			if (loadingModal) loadingModal.remove()
 		} catch (error) {

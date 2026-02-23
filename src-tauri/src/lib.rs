@@ -562,16 +562,35 @@ fn expose_bundled_binaries(app: &tauri::App) {
     }
 
     // Expose bundled syqure as SEQURE_NATIVE_BIN (native runner).
-    // Keep parity with Windows behavior: respect an explicit valid override, else use
-    // bundled/dev candidates.
+    // In installed macOS apps, prefer bundle resources and do not fall back to workspace paths.
+    #[cfg(target_os = "macos")]
+    let is_production = std::env::current_exe()
+        .map(|p| p.to_string_lossy().contains(".app/Contents/"))
+        .unwrap_or(false);
+    #[cfg(not(target_os = "macos"))]
+    let is_production = false;
+
+    let resource_root = app.path().resolve(".", BaseDirectory::Resource).ok();
+
     let mut allow_syqure_override = true;
     if let Ok(existing) = std::env::var("SEQURE_NATIVE_BIN") {
         let existing = existing.trim().to_string();
         if !existing.is_empty() {
             let existing_path = std::path::PathBuf::from(&existing);
             if existing_path.exists() {
-                crate::desktop_log!("🔧 Using pre-set SEQURE_NATIVE_BIN: {}", existing);
-                allow_syqure_override = false;
+                let in_bundle_resources = resource_root
+                    .as_ref()
+                    .map(|root| existing_path.starts_with(root))
+                    .unwrap_or(false);
+                if is_production && !in_bundle_resources {
+                    crate::desktop_log!(
+                        "⚠️  Ignoring pre-set SEQURE_NATIVE_BIN outside app bundle in production: {}",
+                        existing
+                    );
+                } else {
+                    crate::desktop_log!("🔧 Using pre-set SEQURE_NATIVE_BIN: {}", existing);
+                    allow_syqure_override = false;
+                }
             } else {
                 crate::desktop_log!(
                     "⚠️  SEQURE_NATIVE_BIN was set to a missing path ({}); falling back to bundled candidates",
@@ -591,7 +610,31 @@ fn expose_bundled_binaries(app: &tauri::App) {
             .find_map(|path| app.path().resolve(path, BaseDirectory::Resource).ok())
             .filter(|p| p.exists());
 
+        #[cfg(target_os = "macos")]
         if syqure_path.is_none() {
+            if let Ok(exe) = std::env::current_exe() {
+                if let Some(contents_dir) = exe.parent().and_then(|p| p.parent()) {
+                    let macos_bundle_path = contents_dir
+                        .join("Resources")
+                        .join("resources")
+                        .join("syqure")
+                        .join("syqure");
+                    if macos_bundle_path.exists() {
+                        syqure_path = Some(macos_bundle_path);
+                    }
+                }
+            }
+        }
+
+        if syqure_path.is_none() {
+            if let Ok(resource_dir) = app.path().resolve(".", BaseDirectory::Resource) {
+                if let Some(found) = find_bundled_binary(&resource_dir, "syqure") {
+                    syqure_path = Some(found);
+                }
+            }
+        }
+
+        if !is_production && syqure_path.is_none() {
             if let Ok(cwd) = std::env::current_dir() {
                 let dev_paths = [
                     cwd.join("src-tauri")
@@ -632,6 +675,8 @@ fn expose_bundled_binaries(app: &tauri::App) {
             let s = p.to_string_lossy().to_string();
             std::env::set_var("SEQURE_NATIVE_BIN", &s);
             crate::desktop_log!("🔧 Using bundled SEQURE_NATIVE_BIN: {}", s);
+        } else {
+            crate::desktop_log!("⚠️ Bundled syqure binary not found in resources");
         }
     }
 }
@@ -1626,6 +1671,7 @@ pub fn run() {
             get_supported_parameter_types,
             get_common_formats,
             get_local_flow_templates,
+            get_flow_template_catalog,
             // Jupyter commands
             launch_jupyter,
             stop_jupyter,

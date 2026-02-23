@@ -75,7 +75,16 @@ fi
 
 # Build without notarization (local dev)
 echo "Running tauri build (dev mode, no notarization)..."
-APPLE_ID="" APPLE_PASSWORD="" APPLE_TEAM_ID="" npm run tauri -- build
+env \
+  -u APPLE_ID \
+  -u APPLE_PASSWORD \
+  -u APPLE_TEAM_ID \
+  -u APPLE_SIGNING_IDENTITY \
+  -u TAURI_SIGNING_PRIVATE_KEY \
+  -u TAURI_SIGNING_PRIVATE_KEY_PASSWORD \
+  APPLE_SIGNING_IDENTITY="-" \
+  npm exec -- tauri build \
+  --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
 # Clear quarantine on output artifacts
 if [[ "$(uname)" == "Darwin" ]]; then
