@@ -354,7 +354,9 @@ fn resolve_participant_paths(sample_dir: &Path, participant_id: &str) -> Option<
     let participant = yaml.get("participant")?.get(participant_id)?;
 
     let mut paths = Vec::new();
-    for key in ["ref_path", "ref_index", "aligned", "aligned_index"] {
+    // Support both legacy and current participants.yaml keys.
+    // Some sample manifests use `ref`, while older code expected `ref_path`.
+    for key in ["ref_path", "ref", "ref_index", "aligned", "aligned_index"] {
         if let Some(path_val) = participant.get(key).and_then(|v| v.as_str()) {
             if path_val.trim().is_empty() {
                 continue;

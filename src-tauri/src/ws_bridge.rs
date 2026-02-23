@@ -360,6 +360,7 @@ fn get_commands_list() -> serde_json::Value {
         cmd("get_supported_parameter_types", "modules", true),
         cmd("get_common_formats", "modules", true),
         cmd("get_local_flow_templates", "modules", true),
+        cmd("get_flow_template_catalog", "modules", true),
         // Flows
         cmd_async("get_flows", "flows", true),
         cmd_async("create_flow", "flows", false),
@@ -3596,6 +3597,10 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
         }
         "get_local_flow_templates" => {
             let result = crate::commands::modules::get_local_flow_templates();
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "get_flow_template_catalog" => {
+            let result = crate::commands::modules::get_flow_template_catalog(app.clone())?;
             Ok(serde_json::to_value(result).unwrap())
         }
 

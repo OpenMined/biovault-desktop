@@ -203,6 +203,19 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		)
 		let cancelRequested = false
 		let modalHandle = null
+		let uiReleased = false
+
+		const releaseDownloadUi = ({ clearActive = true, clearCancelCallback = true } = {}) => {
+			if (uiReleased) return
+			uiReleased = true
+			if (clearActive) activeDownloads.delete(downloadKey)
+			if (clearCancelCallback) downloadCancelCallbacks.delete(downloadKey)
+			if (buttonEl) {
+				if (originalText != null) buttonEl.textContent = originalText
+				buttonEl.disabled = false
+			}
+			if (progressEl) progressEl.setAttribute('hidden', '')
+		}
 
 		if (activeDownloads.has(downloadKey)) {
 			const config = SAMPLE_DATA_CONFIG[sampleId]
@@ -234,6 +247,9 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 					await invoke('cancel_sample_download')
 				} catch (e) {
 					console.warn('Cancel request failed:', e)
+				} finally {
+					// Unlock the card immediately, but keep active state until backend finishes.
+					releaseDownloadUi({ clearActive: false, clearCancelCallback: false })
 				}
 			}
 			downloadCancelCallbacks.set(downloadKey, cancelFn)
@@ -273,13 +289,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				})
 			}
 		} finally {
-			activeDownloads.delete(downloadKey)
-			downloadCancelCallbacks.delete(downloadKey)
-			if (buttonEl) {
-				if (originalText != null) buttonEl.textContent = originalText
-				buttonEl.disabled = false
-			}
-			if (progressEl) progressEl.setAttribute('hidden', '')
+			releaseDownloadUi()
 			if (modalHandle) modalHandle.close()
 		}
 	}
@@ -349,20 +359,38 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		document.body.appendChild(overlay)
 		const progressBar = modal.querySelector('[data-role="progress-bar"]')
 		const progressText = modal.querySelector('[data-role="progress-text"]')
+		const formatSize = (value) => {
+			const bytes = Number(value)
+			if (!Number.isFinite(bytes) || bytes < 0) return '0 B'
+			const units = ['B', 'KB', 'MB', 'GB', 'TB']
+			if (bytes < 1024) return `${Math.round(bytes)} B`
+			let idx = 0
+			let scaled = bytes
+			while (scaled >= 1024 && idx < units.length - 1) {
+				scaled /= 1024
+				idx += 1
+			}
+			const decimals = scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2
+			return `${scaled.toFixed(decimals)} ${units[idx]}`
+		}
 		const setProgress = (downloaded, total, fileLabel) => {
 			if (!progressBar || !progressText) return
 			const hasTotal = typeof total === 'number' && total > 0
+			const downloadedText = formatSize(downloaded)
 			if (hasTotal) {
 				const percent = Math.max(0, Math.min(100, (downloaded / total) * 100))
+				const totalText = formatSize(total)
 				progressBar.classList.add('is-determinate')
 				progressBar.style.width = `${percent}%`
 				progressText.textContent = fileLabel
-					? `Downloading ${fileLabel}… ${Math.round(percent)}%`
-					: `Downloading… ${Math.round(percent)}%`
+					? `Downloading ${fileLabel}… ${Math.round(percent)}% (${downloadedText} / ${totalText})`
+					: `Downloading… ${Math.round(percent)}% (${downloadedText} / ${totalText})`
 			} else {
 				progressBar.classList.remove('is-determinate')
 				progressBar.style.width = '100%'
-				progressText.textContent = fileLabel ? `Downloading ${fileLabel}…` : 'Downloading…'
+				progressText.textContent = fileLabel
+					? `Downloading ${fileLabel}… (${downloadedText})`
+					: `Downloading… (${downloadedText})`
 			}
 		}
 		const handle = { close, setProgress, downloadId }

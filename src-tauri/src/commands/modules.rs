@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use tauri::{AppHandle, Manager};
 
 #[derive(Deserialize)]
 struct SaveModulePayload {
@@ -1151,4 +1152,151 @@ pub fn get_local_flow_templates() -> HashMap<String, String> {
     }
 
     templates
+}
+
+#[derive(Debug, Deserialize)]
+struct FlowTemplateCatalogFile {
+    templates: Vec<FlowTemplateCatalogItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FlowTemplateCatalogItem {
+    id: String,
+    name: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    color: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    local_path: Option<String>,
+    #[serde(default)]
+    local_paths: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FlowTemplateCatalogEntry {
+    id: String,
+    name: String,
+    description: String,
+    color: Option<String>,
+    source: String,
+}
+
+#[tauri::command]
+pub fn get_flow_template_catalog(app: AppHandle) -> Result<Vec<FlowTemplateCatalogEntry>, String> {
+    let cwd =
+        std::env::current_dir().map_err(|e| format!("Failed to determine current dir: {}", e))?;
+
+    let mut catalog_paths: Vec<PathBuf> = Vec::new();
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        catalog_paths.push(resource_dir.join("flows").join("new-flow-templates.yaml"));
+        catalog_paths.push(
+            resource_dir
+                .join("resources")
+                .join("flows")
+                .join("new-flow-templates.yaml"),
+        );
+    }
+
+    catalog_paths.extend([
+        cwd.join("flows").join("new-flow-templates.yaml"),
+        cwd.join("flows").join("new-flow-templates.yml"),
+        cwd.join("biovault")
+            .join("flows")
+            .join("new-flow-templates.yaml"),
+        cwd.join("biovault")
+            .join("flows")
+            .join("new-flow-templates.yml"),
+    ]);
+
+    let content_with_source = catalog_paths
+        .iter()
+        .find(|path| path.exists())
+        .map(|path| {
+            fs::read_to_string(path)
+                .map(|content| (content, path.display().to_string()))
+                .map_err(|e| format!("Failed reading {}: {}", path.display(), e))
+        })
+        .transpose()?
+        .unwrap_or_else(|| {
+            (
+                include_str!("../../resources/flows/new-flow-templates.yaml").to_string(),
+                "embedded defaults (resources/flows/new-flow-templates.yaml)".to_string(),
+            )
+        });
+
+    let (content, catalog_source) = content_with_source;
+    let catalog: FlowTemplateCatalogFile = serde_yaml::from_str(&content)
+        .map_err(|e| format!("Failed parsing {}: {}", catalog_source, e))?;
+
+    let mut resolved = Vec::new();
+    for item in catalog.templates {
+        let id = item.id.trim().to_string();
+        if id.is_empty() {
+            return Err(format!(
+                "Invalid template entry in {}: id cannot be empty",
+                catalog_source
+            ));
+        }
+
+        let name = item.name.trim().to_string();
+        if name.is_empty() {
+            return Err(format!(
+                "Invalid template entry '{}' in {}: name cannot be empty",
+                id, catalog_source
+            ));
+        }
+
+        let mut candidates: Vec<String> = Vec::new();
+        if let Some(path) = item.local_path {
+            let trimmed = path.trim();
+            if !trimmed.is_empty() {
+                candidates.push(trimmed.to_string());
+            }
+        }
+        for path in item.local_paths {
+            let trimmed = path.trim();
+            if !trimmed.is_empty() {
+                candidates.push(trimmed.to_string());
+            }
+        }
+
+        let local_source = candidates.into_iter().find_map(|candidate| {
+            let candidate_path = cwd.join(candidate);
+            if candidate_path.exists() {
+                Some(candidate_path.to_string_lossy().to_string())
+            } else {
+                None
+            }
+        });
+
+        let source = match local_source {
+            Some(local) => local,
+            None => item
+                .url
+                .map(|u| u.trim().to_string())
+                .filter(|u| !u.is_empty())
+                .ok_or_else(|| {
+                    format!(
+                        "Template '{}' has no valid local path and no fallback URL in {}",
+                        id, catalog_source
+                    )
+                })?,
+        };
+
+        resolved.push(FlowTemplateCatalogEntry {
+            id,
+            name,
+            description: item.description.unwrap_or_default(),
+            color: item
+                .color
+                .map(|c| c.trim().to_string())
+                .filter(|c| !c.is_empty()),
+            source,
+        });
+    }
+
+    Ok(resolved)
 }
