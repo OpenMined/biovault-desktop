@@ -17,9 +17,11 @@
 	import SupportDialog from '$lib/components/support-dialog.svelte'
 	import InviteDialog from '$lib/components/invite-dialog.svelte'
 	import SyftboxPanel from '$lib/components/syftbox-panel.svelte'
+	import ProfileSwitcherDialog from '$lib/components/profile-switcher-dialog.svelte'
 	// import AiAssistant from '$lib/components/ai-assistant.svelte'
 	import DependenciesStatus from '$lib/components/dependencies-status.svelte'
 	import { addNotification, notificationsStore } from '$lib/stores/notifications.svelte'
+	import { profilesStore } from '$lib/stores/profiles.svelte'
 	import SquareTerminalIcon from '@lucide/svelte/icons/square-terminal'
 	import DatabaseIcon from '@lucide/svelte/icons/database'
 	import FolderSyncIcon from '@lucide/svelte/icons/folder-sync'
@@ -37,6 +39,21 @@
 	let supportOpen = $state(false)
 	let inviteOpen = $state(false)
 	let appVersion = $state('')
+	let profileSwitcherOpen = $state(false)
+	let profileGuardLoading = $state(true)
+	const requiresProfileSelection = $derived(
+		!profileGuardLoading &&
+			profilesStore.enabled &&
+			(profilesStore.shouldShowPicker || !profilesStore.currentProfileId)
+	)
+
+	function handleProfileSwitcherOpenChange(next: boolean) {
+		if (requiresProfileSelection) {
+			profileSwitcherOpen = true
+			return
+		}
+		profileSwitcherOpen = next
+	}
 
 	// Send native system notification
 	async function sendNativeNotification(title: string, body: string) {
@@ -58,6 +75,17 @@
 		getVersion()
 			.then((v) => (appVersion = v))
 			.catch(() => {})
+
+		;(async () => {
+			try {
+				await profilesStore.load()
+			} finally {
+				profileGuardLoading = false
+				if (profilesStore.enabled && !profilesStore.currentProfileId) {
+					profileSwitcherOpen = true
+				}
+			}
+		})()
 
 		// Listen for pipeline completion events
 		const unlistenPromise = listen<string>('flow-complete', (event) => {
@@ -250,21 +278,32 @@
 		<!-- Spacer for fixed header -->
 		<div class="h-10 shrink-0"></div>
 
-		<!-- Sidebar + content below header -->
-		<div class="flex flex-1 overflow-hidden">
-			<AppSidebar />
-			<Sidebar.Inset>
-				<div class="flex-1 overflow-auto">
-					{@render children?.()}
-				</div>
-			</Sidebar.Inset>
+			<!-- Sidebar + content below header -->
+			<div class="flex flex-1 overflow-hidden">
+				<AppSidebar />
+				<Sidebar.Inset>
+					<div class="flex-1 overflow-auto">
+						{#if requiresProfileSelection}
+							<div class="text-muted-foreground flex h-full items-center justify-center px-6 text-sm">
+								Select or create a profile to continue.
+							</div>
+						{:else}
+							{@render children?.()}
+						{/if}
+					</div>
+				</Sidebar.Inset>
+			</div>
 		</div>
-	</div>
-</Sidebar.Provider>
+	</Sidebar.Provider>
 
 <NotificationsSheet bind:open={notificationsOpen} />
 <LearnSheet bind:open={learnOpen} />
 <SupportDialog bind:open={supportOpen} />
-<InviteDialog bind:open={inviteOpen} />
+	<InviteDialog bind:open={inviteOpen} />
+	<ProfileSwitcherDialog
+		open={profileSwitcherOpen || requiresProfileSelection}
+		required={requiresProfileSelection}
+		onOpenChange={handleProfileSwitcherOpenChange}
+	/>
 <!-- <AiAssistant /> -->
 <Toaster />

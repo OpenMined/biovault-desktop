@@ -20,6 +20,7 @@
 	import DownloadIcon from '@lucide/svelte/icons/download'
 	import Loader2Icon from '@lucide/svelte/icons/loader-2'
 	import { toast } from 'svelte-sonner'
+	import { profilesStore } from '$lib/stores/profiles.svelte'
 
 	interface Settings {
 		email: string
@@ -80,7 +81,11 @@
 
 	onMount(async () => {
 		try {
-			settings = await invoke<Settings>('get_settings')
+			const [loadedSettings] = await Promise.all([
+				invoke<Settings>('get_settings'),
+				profilesStore.load()
+			])
+			settings = loadedSettings
 			await loadKeyStatus()
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e)
@@ -195,24 +200,46 @@
 			</Card.Content>
 		</Card.Root>
 	{:else if settings}
-		<Card.Root>
-			<Card.Header>
-				<Card.Title class="flex items-center gap-2">
-					<UserIcon class="size-5" />
-					Identity
-				</Card.Title>
-				<Card.Description>Your BioVault identity and account information</Card.Description>
-			</Card.Header>
-			<Card.Content class="space-y-4">
-				<div class="flex items-center gap-3">
-					<MailIcon class="text-muted-foreground size-4" />
-					<div>
-						<div class="text-muted-foreground text-sm">Email</div>
-						<div class="font-medium">{settings.email || 'Not configured'}</div>
+			<Card.Root>
+				<Card.Header>
+					<Card.Title class="flex items-center gap-2">
+						<UserIcon class="size-5" />
+						Identity
+					</Card.Title>
+					<Card.Description>Your BioVault identity and account information</Card.Description>
+				</Card.Header>
+				<Card.Content class="space-y-4">
+					<div class="flex items-center gap-3">
+						<MailIcon class="text-muted-foreground size-4" />
+						<div>
+							<div class="text-muted-foreground text-sm">Email</div>
+							<div class="font-medium">{settings.email || 'Not configured'}</div>
+						</div>
 					</div>
-				</div>
-			</Card.Content>
-		</Card.Root>
+				</Card.Content>
+			</Card.Root>
+
+			<Card.Root>
+				<Card.Header>
+					<Card.Title class="flex items-center gap-2">
+						<UserIcon class="size-5" />
+						Active Profile
+					</Card.Title>
+					<Card.Description>The profile currently loaded by this app window</Card.Description>
+				</Card.Header>
+				<Card.Content class="space-y-4">
+					<div>
+						<div class="text-muted-foreground text-sm">Profile Email</div>
+						<div class="font-medium">{profilesStore.currentProfile?.email || 'Not selected'}</div>
+					</div>
+					<div>
+						<div class="text-muted-foreground text-sm">Profile Home</div>
+						<div class="font-mono text-sm">
+							{profilesStore.currentProfile?.biovault_home || 'Not selected'}
+						</div>
+					</div>
+				</Card.Content>
+			</Card.Root>
 
 		<Card.Root>
 			<Card.Header>

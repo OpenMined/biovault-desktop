@@ -36,6 +36,8 @@ SINGLE_MODE=0
 SINGLE_TARGET=""
 STOP_ONLY=0
 RESET_FLAG=0
+FIRST_RUN=0
+VITE_PID=""
 mkdir -p "$LOG_DIR"
 
 DEFAULT_CLIENT1="${CLIENT1_EMAIL:-client1@sandbox.local}"
@@ -279,14 +281,13 @@ launch_instance() {
       "BIOVAULT_HOME=$home"
       "BIOVAULT_DEV_MODE=1"
       "BIOVAULT_DEV_SYFTBOX=1"
-      "BIOVAULT_DISABLE_PROFILES=1"
       "BV_SYFTBOX_BACKEND=$backend"
       "SYFTBOX_SERVER_URL=$SYFTBOX_URL"
       "SYFTBOX_EMAIL=$email"
       "SYFTBOX_AUTH_ENABLED=$SYFTBOX_AUTH_ENABLED"
       "SYFTBOX_CONFIG_PATH=$env_config"
       "SYFTBOX_DATA_DIR=$env_data"
-      "SBC_VAULT=$SYFTBOX_DATA_DIR/.sbc"
+      "SBC_VAULT=$env_data/.sbc"
       "BIOVAULT_DEBUG_BANNER=1"
     )
     if [[ "$backend" == "process" ]]; then
@@ -295,9 +296,57 @@ launch_instance() {
         "SYFTBOX_VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
       )
     fi
-    cmd+=(npm run dev)
+    cd "$ROOT_DIR/src-tauri"
+    cmd+=(
+      bunx
+      tauri
+      dev
+      --config
+      '{"build": {"devUrl": "http://localhost:1420", "frontendDist": "../ui/build"}}'
+    )
     "${cmd[@]}"
   )
+}
+
+launch_fresh_instance() {
+  local tag="$1"; shift
+  echo "[live] Launching BioVault ($tag) in first-run mode" >&2
+  (
+    cd "$ROOT_DIR/src-tauri"
+    env \
+      -u BIOVAULT_HOME \
+      -u SYFTBOX_EMAIL \
+      -u SYFTBOX_CONFIG_PATH \
+      -u SYFTBOX_DATA_DIR \
+      -u SBC_VAULT \
+      -u SYC_VAULT \
+      BV_SYFTBOX_BACKEND=embedded \
+      SYFTBOX_SERVER_URL="$SYFTBOX_URL" \
+      SYFTBOX_AUTH_ENABLED="$SYFTBOX_AUTH_ENABLED" \
+      bunx tauri dev --config '{"build": {"devUrl": "http://localhost:1420", "frontendDist": "../ui/build"}}'
+  )
+}
+
+start_vite() {
+  echo "[live] Starting Vite dev server..."
+  (
+    cd "$ROOT_DIR/ui"
+    npm run dev -- --port 1420 2>&1 | while read -r line; do
+      echo "[VITE] $line"
+    done
+  ) &
+  VITE_PID=$!
+
+  echo "[live] Waiting for Vite..."
+  for i in {1..30}; do
+    if curl -s http://localhost:1420 >/dev/null 2>&1; then
+      echo "[live] Vite ready on :1420"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "[live] ERROR: Vite did not start" >&2
+  exit 1
 }
 
 cleanup() {
@@ -309,8 +358,13 @@ cleanup() {
       kill "$pid" >/dev/null 2>&1 || true
     fi
   done
+  [[ -n "$VITE_PID" ]] && kill "$VITE_PID" 2>/dev/null || true
+  pkill -f "bunx tauri dev" 2>/dev/null || true
+  pkill -f "npm run tauri -- dev" 2>/dev/null || true
+  pkill -f "tauri dev --config" 2>/dev/null || true
+  pkill -f "vite.*1420" 2>/dev/null || true
   local targets=("${CLIENTS[@]:-}")
-  if ((${#targets[@]} == 0)); then
+  if (( ! FIRST_RUN )) && ((${#targets[@]} == 0)); then
     targets=("$DEFAULT_CLIENT1" "$DEFAULT_CLIENT2")
   fi
   for email in "${targets[@]}"; do
@@ -360,8 +414,11 @@ main() {
         SANDBOX_DIR="${2:?--path requires a directory}"
         shift
         ;;
+      --first-run)
+        FIRST_RUN=1
+        ;;
       -h|--help)
-        echo "Usage: $0 [--client EMAIL ... | --clients a,b] [--single [EMAIL]] [--stop] [--reset] [--path DIR] [--embedded|--process|--go]"
+        echo "Usage: $0 [--client EMAIL ... | --clients a,b] [--single [EMAIL]] [--stop] [--reset] [--path DIR] [--first-run] [--embedded|--process|--go]"
         exit 0
         ;;
       *)
@@ -382,7 +439,7 @@ main() {
     echo "[live] Will reset individual client directories (not entire sandbox)"
   fi
 
-  if ((${#CLIENTS[@]} == 0)); then
+  if (( ! FIRST_RUN )) && ((${#CLIENTS[@]} == 0)); then
     CLIENTS=("$DEFAULT_CLIENT1" "$DEFAULT_CLIENT2")
   fi
 
@@ -400,6 +457,17 @@ main() {
   else
     build_syftbox_rust
     ensure_cli "embedded"
+  fi
+
+  start_vite
+
+  if (( FIRST_RUN )); then
+    launch_fresh_instance "client2" & pid2=$!
+    launch_fresh_instance "client1" & pid1=$!
+    echo "[live] client1 PID: $pid1"
+    echo "[live] client2 PID: $pid2"
+    wait
+    return
   fi
 
   # Provision all requested clients

@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { profilesStore, type ProfileSummary } from '$lib/stores/profiles.svelte'
+	import { syftboxAuthStore } from '$lib/stores/syftbox-auth.svelte'
+	import { invoke } from '@tauri-apps/api/core'
 	import * as Dialog from '$lib/components/ui/dialog/index.js'
 	import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js'
 	import * as Avatar from '$lib/components/ui/avatar/index.js'
 	import { Button } from '$lib/components/ui/button/index.js'
 	import { Badge } from '$lib/components/ui/badge/index.js'
-	import { Separator } from '$lib/components/ui/separator/index.js'
 	import UserIcon from '@lucide/svelte/icons/user'
 	import UsersIcon from '@lucide/svelte/icons/users'
 	import PlusIcon from '@lucide/svelte/icons/plus'
@@ -13,24 +14,42 @@
 	import CheckIcon from '@lucide/svelte/icons/check'
 	import Loader2Icon from '@lucide/svelte/icons/loader-2'
 	import FolderIcon from '@lucide/svelte/icons/folder'
+	import LogOutIcon from '@lucide/svelte/icons/log-out'
 	import { open as openDialog, message as showMessage, confirm } from '@tauri-apps/plugin-dialog'
+	import { toast } from 'svelte-sonner'
 
 	interface Props {
 		open?: boolean
+		required?: boolean
 		onOpenChange?: (open: boolean) => void
 	}
 
-	let { open = $bindable(false), onOpenChange }: Props = $props()
+	let { open = $bindable(false), required = false, onOpenChange }: Props = $props()
 
 	let switching = $state(false)
+	let signingOut = $state(false)
 	let deleting = $state<string | null>(null)
 	let deleteConfirmOpen = $state(false)
 	let profileToDelete = $state<ProfileSummary | null>(null)
+	let lastRequiredToastAt = 0
 
 	const profiles = $derived(profilesStore.profiles)
 	const loading = $derived(profilesStore.loading)
 
+	function notifyProfileRequired() {
+		const now = Date.now()
+		if (now - lastRequiredToastAt < 1200) return
+		lastRequiredToastAt = now
+		toast.error('Profile setup required', {
+			description: 'Select or create a profile before continuing.'
+		})
+	}
+
 	function handleOpenChange(newOpen: boolean) {
+		if (required && !newOpen) {
+			notifyProfileRequired()
+			return
+		}
 		open = newOpen
 		onOpenChange?.(newOpen)
 		if (newOpen) {
@@ -110,6 +129,47 @@
 		}
 	}
 
+	async function handleSignOutCurrentProfile() {
+		if (signingOut) return
+
+		const ok = await confirm(
+			'Sign out of this profile and return to the profile picker?',
+			{
+				title: 'Sign out of Profile',
+				kind: 'warning'
+			}
+		)
+		if (!ok) return
+
+		signingOut = true
+		try {
+			// Signing out of profile should also bring SyftBox offline for this window.
+			try {
+				await syftboxAuthStore.goOffline(false)
+			} catch {
+				// Continue with profile sign-out even if daemon stop fails.
+			}
+			await invoke('profiles_open_picker')
+			await showMessage('Signing out of this profile.', {
+				title: 'Signed Out',
+				kind: 'info'
+			})
+		} catch (e) {
+			const message = String(e)
+			if (message.includes('DEV_MODE_RESTART_REQUIRED')) {
+				await showMessage('Please restart the app to open the profile picker in dev mode.', {
+					title: 'Restart Required',
+					kind: 'info'
+				})
+			} else {
+				console.error('Failed to sign out of profile:', e)
+				await showMessage(message, { title: 'Failed to Sign Out', kind: 'error' })
+			}
+		} finally {
+			signingOut = false
+		}
+	}
+
 	function getInitials(profile: ProfileSummary): string {
 		if (profile.email) {
 			return profile.email.substring(0, 2).toUpperCase()
@@ -137,16 +197,39 @@
 </script>
 
 <Dialog.Root bind:open onOpenChange={handleOpenChange}>
-	<Dialog.Content class="sm:max-w-2xl">
-		<Dialog.Header>
-			<Dialog.Title class="flex items-center gap-2">
-				<UsersIcon class="size-5" />
-				Switch Profile
-			</Dialog.Title>
-			<Dialog.Description>
-				Switch between different BioVault identities without re-authenticating.
-			</Dialog.Description>
-		</Dialog.Header>
+		<Dialog.Content
+		class="sm:max-w-2xl"
+		showCloseButton={!required}
+		onInteractOutside={(e) => {
+			if (required) {
+				e.preventDefault()
+				notifyProfileRequired()
+			}
+		}}
+		onEscapeKeyDown={(e) => {
+			if (required) {
+				e.preventDefault()
+				notifyProfileRequired()
+			}
+		}}
+	>
+			<Dialog.Header>
+				<div class="flex items-start justify-between gap-3">
+					<div>
+						<Dialog.Title class="flex items-center gap-2">
+							<UsersIcon class="size-5" />
+							Switch Profile
+						</Dialog.Title>
+						<Dialog.Description>
+							Switch between BioVault profiles or sign out to return to the profile picker.
+						</Dialog.Description>
+					</div>
+					<Button variant="outline" onclick={handleAddProfile} disabled={switching}>
+						<PlusIcon class="size-4" />
+						Add Profile
+					</Button>
+				</div>
+			</Dialog.Header>
 
 		<div class="py-4">
 			{#if loading}
@@ -212,6 +295,21 @@
 										<TrashIcon class="size-4" />
 									{/if}
 								</Button>
+								{:else if profile.is_current}
+									<Button
+										variant="ghost"
+										size="icon"
+										class="shrink-0"
+										onclick={handleSignOutCurrentProfile}
+										disabled={signingOut}
+										title="Sign out of profile"
+									>
+									{#if signingOut}
+										<Loader2Icon class="size-4 animate-spin" />
+									{:else}
+										<LogOutIcon class="size-4" />
+									{/if}
+								</Button>
 							{/if}
 						</div>
 					{/each}
@@ -219,17 +317,8 @@
 			{/if}
 		</div>
 
-		<Separator />
-
-		<Dialog.Footer class="sm:justify-between">
-			<Button variant="outline" onclick={handleAddProfile} disabled={switching}>
-				<PlusIcon class="size-4" />
-				Add Profile
-			</Button>
-			<Button variant="ghost" onclick={() => handleOpenChange(false)}>Close</Button>
-		</Dialog.Footer>
-	</Dialog.Content>
-</Dialog.Root>
+		</Dialog.Content>
+	</Dialog.Root>
 
 <AlertDialog.Root bind:open={deleteConfirmOpen}>
 	<AlertDialog.Content>
@@ -256,4 +345,3 @@
 		</AlertDialog.Footer>
 	</AlertDialog.Content>
 </AlertDialog.Root>
-

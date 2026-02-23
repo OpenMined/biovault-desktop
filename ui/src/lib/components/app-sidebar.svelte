@@ -62,8 +62,14 @@
 	const isAuthenticated = $derived(syftboxAuthStore.isAuthenticated)
 	const isOnline = $derived(syftboxAuthStore.isOnline)
 	const isTogglingOnline = $derived(syftboxAuthStore.isTogglingOnline)
+	const profileRequired = $derived(
+		profilesStore.enabled && (profilesStore.shouldShowPicker || !profilesStore.currentProfileId)
+	)
+	const isAuthenticatedForUi = $derived(!profileRequired && isAuthenticated)
+	const isOnlineForUi = $derived(!profileRequired && isOnline)
 
 	async function handleToggleOnline() {
+		if (profileRequired) return
 		try {
 			await syftboxAuthStore.toggleOnline()
 		} catch (e) {
@@ -73,8 +79,11 @@
 
 	// Update email when auth state changes
 	$effect(() => {
-		if (syftboxAuthStore.isAuthenticated && syftboxAuthStore.email) {
+		if (!profileRequired && syftboxAuthStore.isAuthenticated && syftboxAuthStore.email) {
 			userEmail = syftboxAuthStore.email
+		}
+		if (profileRequired) {
+			userEmail = ''
 		}
 	})
 
@@ -98,12 +107,23 @@
 
 		;(async () => {
 			try {
-				// Check SyftBox auth status and load profiles in parallel
-				await Promise.all([syftboxAuthStore.checkAuth(), profilesStore.load()])
+				await profilesStore.load()
+				const needsProfile =
+					profilesStore.enabled && (profilesStore.shouldShowPicker || !profilesStore.currentProfileId)
 
-				// Get email from settings
-				const settings = await invoke<{ email: string }>('get_settings')
-				userEmail = settings.email || ''
+				if (needsProfile) {
+					try {
+						await syftboxAuthStore.goOffline(false)
+					} catch {
+						// no-op
+					}
+					syftboxAuthStore.setAuthenticated(false, '')
+					userEmail = ''
+				} else {
+					await syftboxAuthStore.checkAuth()
+					const settings = await invoke<{ email: string }>('get_settings')
+					userEmail = settings.email || ''
+				}
 				await refreshDevstackHealth()
 				healthPoll = setInterval(refreshDevstackHealth, 15000)
 			} catch (e) {
@@ -176,21 +196,23 @@
 													{userLoading ? '...' : userInitials}
 												</Avatar.Fallback>
 											</Avatar.Root>
-											{#if isAuthenticated}
+											{#if isAuthenticatedForUi}
 												<span
-													class="absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-sidebar {isOnline
+													class="absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-sidebar {isOnlineForUi
 														? 'bg-emerald-500'
 														: 'bg-slate-400'}"
 												></span>
 											{/if}
 										</Tooltip.Trigger>
 										<Tooltip.Content side="top">
-											{#if !isAuthenticated}
-												Not connected to SyftBox
-											{:else if isOnline}
-												SyftBox Online
-											{:else}
-												SyftBox Offline
+												{#if profileRequired}
+													No profile selected
+												{:else if !isAuthenticatedForUi}
+													Not connected to SyftBox
+												{:else if isOnlineForUi}
+													SyftBox Online
+												{:else}
+													SyftBox Offline
 											{/if}
 										</Tooltip.Content>
 									</Tooltip.Root>
@@ -249,37 +271,42 @@
 							</DropdownMenu.Item>
 						</DropdownMenu.Group>
 						<DropdownMenu.Separator />
-						{#if isAuthenticated}
-							<DropdownMenu.Group>
-								<DropdownMenu.Label class="text-xs text-muted-foreground font-normal">
-									SyftBox Network
-								</DropdownMenu.Label>
-								<div class="flex items-center justify-between px-2 py-1.5">
-									<div class="flex items-center gap-2 text-sm">
-										{#if isTogglingOnline}
-											<Loader2Icon class="size-4 animate-spin" />
-										{:else if isOnline}
-											<WifiIcon class="size-4 text-emerald-500" />
-										{:else}
-											<WifiOffIcon class="size-4 text-muted-foreground" />
-										{/if}
-										<span>{isOnline ? 'Online' : 'Offline'}</span>
+							{#if isAuthenticatedForUi}
+								<DropdownMenu.Group>
+									<DropdownMenu.Label class="text-xs text-muted-foreground font-normal">
+										SyftBox Network
+									</DropdownMenu.Label>
+									<div class="flex items-center justify-between gap-2 px-2 py-1.5">
+										<div class="flex items-center gap-2 text-sm">
+											<Switch
+												checked={isOnlineForUi}
+												onCheckedChange={handleToggleOnline}
+												disabled={isTogglingOnline || profileRequired}
+											/>
+											{#if isTogglingOnline}
+												<Loader2Icon class="size-4 animate-spin" />
+											{:else if isOnlineForUi}
+												<WifiIcon class="size-4 text-emerald-500" />
+											{:else}
+												<WifiOffIcon class="size-4 text-muted-foreground" />
+											{/if}
+											<span>{isOnlineForUi ? 'Online' : 'Offline'}</span>
+										</div>
+										<button
+											type="button"
+											class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+											onclick={() => (disconnectDialogOpen = true)}
+											disabled={disconnecting}
+											title="Disconnect from SyftBox"
+											aria-label="Disconnect from SyftBox"
+										>
+											<LogOutIcon class="size-4" />
+										</button>
 									</div>
-									<Switch
-										checked={isOnline}
-										onCheckedChange={handleToggleOnline}
-										disabled={isTogglingOnline}
-									/>
-								</div>
-							</DropdownMenu.Group>
-							<DropdownMenu.Separator />
-							<DropdownMenu.Item onclick={() => (disconnectDialogOpen = true)}>
-								<LogOutIcon />
-								Disconnect from SyftBox
-							</DropdownMenu.Item>
-						{:else}
-							<DropdownMenu.Item onclick={handleSignIn}>
-								<LogInIcon />
+								</DropdownMenu.Group>
+							{:else}
+								<DropdownMenu.Item onclick={handleSignIn}>
+									<LogInIcon />
 								Connect to SyftBox
 							</DropdownMenu.Item>
 						{/if}
@@ -308,8 +335,8 @@
 		<AlertDialog.Header>
 			<AlertDialog.Title>Disconnect from SyftBox?</AlertDialog.Title>
 			<AlertDialog.Description>
-				You will be disconnected from the SyftBox network. You can reconnect at any time by signing
-				in again.
+				You will be disconnected from the SyftBox network. You can reconnect at any time by
+				connecting again.
 			</AlertDialog.Description>
 		</AlertDialog.Header>
 		<AlertDialog.Footer>

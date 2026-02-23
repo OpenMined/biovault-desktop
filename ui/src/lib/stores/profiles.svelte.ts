@@ -24,6 +24,7 @@ export interface ProfilesBootState {
 interface ProfilesState {
 	enabled: boolean
 	loading: boolean
+	shouldShowPicker: boolean
 	profiles: ProfileSummary[]
 	currentProfileId: string | null
 }
@@ -31,6 +32,7 @@ interface ProfilesState {
 let state = $state<ProfilesState>({
 	enabled: false,
 	loading: true,
+	shouldShowPicker: false,
 	profiles: [],
 	currentProfileId: null,
 })
@@ -44,6 +46,9 @@ export const profilesStore = {
 	},
 	get profiles() {
 		return state.profiles
+	},
+	get shouldShowPicker() {
+		return state.shouldShowPicker
 	},
 	get currentProfileId() {
 		return state.currentProfileId
@@ -60,11 +65,13 @@ export const profilesStore = {
 		try {
 			const bootState = await invoke<ProfilesBootState>('profiles_get_boot_state')
 			state.enabled = bootState.enabled
+			state.shouldShowPicker = bootState.should_show_picker
 			state.profiles = bootState.profiles
 			state.currentProfileId = bootState.current_profile_id
 		} catch (e) {
 			console.error('Failed to load profiles:', e)
 			state.enabled = false
+			state.shouldShowPicker = false
 			state.profiles = []
 		} finally {
 			state.loading = false

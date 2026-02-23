@@ -22,6 +22,7 @@ CLIENT_EMAIL=""
 RESET_FLAG=0
 LIVE_MODE=0
 PATH_SET=0
+FIRST_RUN=0
 VITE_PID=""
 
 mkdir -p "$LOG_DIR"
@@ -109,21 +110,36 @@ start_vite() {
 launch_tauri_instance() {
   local home="$1"
   local email="$2"
-  
-  echo "[new-ui] Launching Tauri with BIOVAULT_HOME=$home email=$email"
+
+  if [[ -n "$home" ]]; then
+    echo "[new-ui] Launching Tauri with BIOVAULT_HOME=$home email=$email"
+  else
+    echo "[new-ui] Launching Tauri in first-run mode (no preconfigured BIOVAULT_HOME)"
+  fi
   
   (
     cd "$ROOT_DIR/src-tauri"
-    
-    export BIOVAULT_HOME="$home"
+
     export BV_SYFTBOX_BACKEND="embedded"
     export SYFTBOX_SERVER_URL="$SYFTBOX_URL"
-    export SYFTBOX_EMAIL="$email"
     export SYFTBOX_AUTH_ENABLED="$SYFTBOX_AUTH_ENABLED"
-    export SYFTBOX_CONFIG_PATH="$home/syftbox/config.json"
-    export SYFTBOX_DATA_DIR="$home"
-    export SBC_VAULT="$SYFTBOX_DATA_DIR/.sbc"
-    export SYC_VAULT="$SYFTBOX_DATA_DIR/.syc"
+
+    if [[ -n "$home" ]]; then
+      export BIOVAULT_HOME="$home"
+      export SYFTBOX_EMAIL="$email"
+      export SYFTBOX_CONFIG_PATH="$home/syftbox/config.json"
+      export SYFTBOX_DATA_DIR="$home"
+      export SBC_VAULT="$SYFTBOX_DATA_DIR/.sbc"
+      export SYC_VAULT="$SYFTBOX_DATA_DIR/.syc"
+    else
+      unset BIOVAULT_HOME
+      unset SYFTBOX_EMAIL
+      unset SYFTBOX_CONFIG_PATH
+      unset SYFTBOX_DATA_DIR
+      unset SBC_VAULT
+      unset SYC_VAULT
+    fi
+
     if (( LIVE_MODE )); then
       unset BIOVAULT_DEV_MODE
       unset BIOVAULT_DEV_SYFTBOX
@@ -178,6 +194,10 @@ while [[ $# -gt 0 ]]; do
       PATH_SET=1
       shift 2
       ;;
+    --first-run)
+      FIRST_RUN=1
+      shift
+      ;;
     --live)
       LIVE_MODE=1
       shift
@@ -191,7 +211,7 @@ done
 
 # Live mode defaults
 if (( LIVE_MODE )); then
-  if [[ -z "$CLIENT_EMAIL" ]]; then
+  if (( ! FIRST_RUN )) && [[ -z "$CLIENT_EMAIL" ]]; then
     CLIENT_EMAIL="$DEFAULT_CLIENT"
   fi
   if (( ! PATH_SET )) && [[ "$SANDBOX_DIR" == "$ROOT_DIR/sandbox" ]]; then
@@ -201,7 +221,7 @@ if (( LIVE_MODE )); then
     SYFTBOX_AUTH_ENABLED=1
   fi
 else
-  if [[ -z "$CLIENT_EMAIL" ]]; then
+  if (( ! FIRST_RUN )) && [[ -z "$CLIENT_EMAIL" ]]; then
     CLIENT_EMAIL="$DEFAULT_CLIENT"
   fi
   if [[ -z "$SYFTBOX_AUTH_ENABLED" ]]; then
@@ -216,18 +236,20 @@ echo " Client: $CLIENT_EMAIL"
 echo " SyftBox: $SYFTBOX_URL"
 echo " Auth: $SYFTBOX_AUTH_ENABLED"
 echo " Live mode: $LIVE_MODE"
+echo " First run mode: $FIRST_RUN"
 echo " Sandbox: $SANDBOX_DIR"
 echo "=============================================="
 
 # Build binaries
 build_binaries
 
-# Provision client
-provision_client "$CLIENT_EMAIL"
-
 # Start Vite dev server
 start_vite
 
-# Launch Tauri instance
-CLIENT_HOME="$SANDBOX_DIR/$CLIENT_EMAIL"
-launch_tauri_instance "$CLIENT_HOME" "$CLIENT_EMAIL"
+if (( FIRST_RUN )); then
+  launch_tauri_instance "" ""
+else
+  provision_client "$CLIENT_EMAIL"
+  CLIENT_HOME="$SANDBOX_DIR/$CLIENT_EMAIL"
+  launch_tauri_instance "$CLIENT_HOME" "$CLIENT_EMAIL"
+fi
