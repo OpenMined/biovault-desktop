@@ -372,11 +372,13 @@ fn spawn_queue_processor(
     });
 }
 
-// Scan resources directory for a bundled binary by name (java/nextflow/uv)
+// Scan resources directory for a bundled binary by name.
 fn find_bundled_binary(resource_dir: &Path, name: &str) -> Option<PathBuf> {
     let mut search_roots = vec![
         resource_dir.join("bundled"),
         resource_dir.join("resources").join("bundled"),
+        resource_dir.join("syqure"),
+        resource_dir.join("resources").join("syqure"),
     ];
 
     search_roots.sort();
@@ -621,6 +623,21 @@ fn expose_bundled_binaries(app: &tauri::App) {
                         .join("syqure");
                     if macos_bundle_path.exists() {
                         syqure_path = Some(macos_bundle_path);
+                    }
+                }
+            }
+        }
+
+        if syqure_path.is_none() {
+            if let Ok(resource_dir) = app.path().resolve(".", BaseDirectory::Resource) {
+                let direct_candidates = [
+                    resource_dir.join("syqure").join("syqure"),
+                    resource_dir.join("resources").join("syqure").join("syqure"),
+                ];
+                for candidate in direct_candidates {
+                    if candidate.exists() {
+                        syqure_path = Some(candidate);
+                        break;
                     }
                 }
             }
