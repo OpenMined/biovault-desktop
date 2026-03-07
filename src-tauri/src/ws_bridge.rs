@@ -67,6 +67,15 @@ struct BridgeTask {
     port: u16,
 }
 
+fn parse_source_thread_name(args: &Value) -> Option<String> {
+    let obj = args.as_object()?;
+    obj.get("sourceThreadName")
+        .cloned()
+        .or_else(|| obj.get("source_thread_name").cloned())
+        .or_else(|| obj.get("threadName").cloned())
+        .and_then(|v| serde_json::from_value(v).ok())
+}
+
 #[derive(Default)]
 struct BridgeManager {
     ws: Option<BridgeTask>,
@@ -333,7 +342,7 @@ fn get_commands_list() -> serde_json::Value {
         cmd_long("sync_messages_with_failures", "messages", false),
         cmd_long("refresh_messages_batched", "messages", false),
         cmd("list_message_threads", "messages", true),
-        cmd("list_spaces", "messages", true),
+        cmd("list_threads", "messages", true),
         cmd("get_thread_messages", "messages", true),
         cmd("get_contact_timeline", "messages", true),
         cmd("send_message", "messages", false),
@@ -2034,11 +2043,11 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             let result = crate::list_message_threads(scope, limit).map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
-        "list_spaces" => {
+        "list_threads" => {
             let limit: Option<usize> = args
                 .get("limit")
                 .and_then(|v| serde_json::from_value(v.clone()).ok());
-            let result = crate::list_spaces(limit).map_err(|e| e.to_string())?;
+            let result = crate::list_threads(limit).map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "get_thread_messages" => {
@@ -3036,7 +3045,12 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             let result =
-                crate::commands::modules::import_flow_with_deps(url, name_override, overwrite)
+                crate::commands::modules::import_flow_with_deps(
+                    state.clone(),
+                    url,
+                    name_override,
+                    overwrite,
+                )
                     .await
                     .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
@@ -3078,11 +3092,16 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .get("spec")
                 .cloned()
                 .ok_or_else(|| "Missing spec".to_string())?;
+            let overwrite: bool = args
+                .get("overwrite")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let result = crate::commands::flows::import_flow_from_message(
                 state.clone(),
                 name,
                 version,
                 spec,
+                Some(overwrite),
             )
             .await
             .map_err(|e| e.to_string())?;
@@ -3103,11 +3122,25 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .get("overwrite")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
+            let source_sender: Option<String> = args
+                .get("sourceSender")
+                .cloned()
+                .or_else(|| args.get("source_sender").cloned())
+                .and_then(|v| serde_json::from_value(v).ok());
+            let source_thread_id: Option<String> = args
+                .get("sourceThreadId")
+                .cloned()
+                .or_else(|| args.get("source_thread_id").cloned())
+                .and_then(|v| serde_json::from_value(v).ok());
+            let source_thread_name: Option<String> = parse_source_thread_name(&args);
             let result = crate::commands::flows::import_flow_from_request(
                 state.clone(),
                 name,
                 flow_location,
                 overwrite,
+                source_sender,
+                source_thread_id,
+                source_thread_name,
             )
             .await
             .map_err(|e| e.to_string())?;
@@ -4443,4 +4476,39 @@ pub async fn restart_agent_bridge(
     manager.http = http_task;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_source_thread_name;
+    use serde_json::{json, Map, Value};
+
+    #[test]
+    fn parse_source_thread_name_prefers_new_fields() {
+        let mut args = Map::<String, Value>::new();
+        args.insert("sourceThreadName".to_string(), json!("alpha"));
+        args.insert("source_thread_name".to_string(), json!("beta"));
+        args.insert("threadName".to_string(), json!("gamma"));
+        assert_eq!(
+            parse_source_thread_name(&Value::Object(args)).as_deref(),
+            Some("alpha")
+        );
+    }
+
+    #[test]
+    fn parse_source_thread_name_supports_snake_and_fallback() {
+        let mut args = Map::<String, Value>::new();
+        args.insert("source_thread_name".to_string(), json!("beta"));
+        assert_eq!(
+            parse_source_thread_name(&Value::Object(args.clone())).as_deref(),
+            Some("beta")
+        );
+
+        args.clear();
+        args.insert("threadName".to_string(), json!("gamma"));
+        assert_eq!(
+            parse_source_thread_name(&Value::Object(args)).as_deref(),
+            Some("gamma")
+        );
+    }
 }

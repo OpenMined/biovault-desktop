@@ -7,9 +7,22 @@ export interface FlowTemplate {
 	icon: 'dna' | 'user' | 'scan-eye'
 	color: 'blue' | 'purple' | 'green' | 'red'
 	sourceUrl: string
+	localTemplateKey?: string
+	dependencies?: string[]
 }
 
 export const flowTemplates: FlowTemplate[] = [
+	{
+		id: 'apol1',
+		name: 'APOL1 Classifier',
+		description: 'Genetic variant analysis',
+		icon: 'dna',
+		color: 'blue',
+		sourceUrl:
+			'https://github.com/OpenMined/bioscript/blob/main/examples/apol1/apol1-classifier/flow.yaml',
+		localTemplateKey: 'apol1',
+		dependencies: ['apol1-classifier'],
+	},
 	{
 		id: 'allele-freq',
 		name: 'Allele Frequency',
@@ -19,12 +32,33 @@ export const flowTemplates: FlowTemplate[] = [
 		sourceUrl: 'https://github.com/OpenMined/biovault/blob/main/flows/allele-freq/flow.yaml',
 	},
 	{
+		id: 'brca',
+		name: 'BRCA Classifier',
+		description: 'Cancer risk assessment',
+		icon: 'user',
+		color: 'purple',
+		sourceUrl: 'https://github.com/OpenMined/bioscript/blob/main/examples/brca/brca-classifier/flow.yaml',
+		localTemplateKey: 'brca',
+		dependencies: ['brca-classifier'],
+	},
+	{
 		id: 'clinvar-vcf',
 		name: 'ClinVar VCF',
 		description: 'Clinical variant classification',
 		icon: 'dna',
 		color: 'purple',
 		sourceUrl: 'https://github.com/OpenMined/biovault/blob/main/flows/clinvar-vcf/flow.yaml',
+	},
+	{
+		id: 'herc2',
+		name: 'HERC2 Classifier',
+		description: 'Pigmentation analysis',
+		icon: 'scan-eye',
+		color: 'green',
+		sourceUrl:
+			'https://github.com/OpenMined/bioscript/blob/main/examples/herc2/herc2-classifier/flow.yaml',
+		localTemplateKey: 'herc2',
+		dependencies: ['herc2-classifier'],
 	},
 	{
 		id: 'eye-color',
@@ -61,8 +95,8 @@ export const flowTemplates: FlowTemplate[] = [
 	},
 	{
 		id: 'multiparty',
-		name: 'Multiparty',
-		description: 'Multiparty computation demo',
+		name: 'Multiparty Demo',
+		description: '3-party collaborative flow',
 		icon: 'user',
 		color: 'blue',
 		sourceUrl: 'https://github.com/OpenMined/biovault/blob/main/flows/multiparty/flow.yaml',
@@ -95,7 +129,7 @@ export const flowTemplates: FlowTemplate[] = [
 	{
 		id: 'syqure-demo',
 		name: 'SyQure Demo',
-		description: 'SyQure demonstration flow',
+		description: 'MPC rsid aggregation demo',
 		icon: 'user',
 		color: 'green',
 		sourceUrl: 'https://github.com/OpenMined/biovault/blob/main/flows/syqure-demo/flow.yaml',
@@ -107,6 +141,17 @@ export const flowTemplates: FlowTemplate[] = [
 		icon: 'dna',
 		color: 'red',
 		sourceUrl: 'https://github.com/OpenMined/biovault/blob/main/flows/syqure-smoke-test/flow.yaml',
+	},
+	{
+		id: 'thalassemia',
+		name: 'Thalassemia Classifier',
+		description: 'Blood disorder variants',
+		icon: 'dna',
+		color: 'red',
+		sourceUrl:
+			'https://github.com/OpenMined/bioscript/blob/main/examples/thalassemia/thalassemia-classifier/flow.yaml',
+		localTemplateKey: 'thalassemia',
+		dependencies: ['thalassemia-classifier'],
 	},
 	{
 		id: 'trusted-allele-agg',

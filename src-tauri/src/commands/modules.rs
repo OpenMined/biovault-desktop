@@ -334,12 +334,13 @@ pub fn import_module(
 
 #[tauri::command]
 pub async fn import_flow_with_deps(
+    state: tauri::State<'_, AppState>,
     url: String,
     name_override: Option<String>,
     overwrite: bool,
 ) -> Result<String, String> {
-    // Spawn blocking to avoid Send issues with BioVaultDb
-    tauri::async_runtime::spawn_blocking(move || {
+    let url_for_meta = url.clone();
+    let imported_name = tauri::async_runtime::spawn_blocking(move || {
         tauri::async_runtime::block_on(async {
             biovault::cli::commands::module_management::import_flow_with_deps(
                 &url,
@@ -351,7 +352,30 @@ pub async fn import_flow_with_deps(
         })
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+
+    // Mark flow provenance for Explore/dependency-aware imports.
+    if let Ok(db) = state.biovault_db.lock() {
+        if let Ok(flows) = db.list_flows() {
+            if let Some(flow) = flows.into_iter().find(|f| f.name == imported_name) {
+                let provenance = crate::commands::flows::FlowProvenance {
+                    source_type: "explore".to_string(),
+                    source_sender: None,
+                    source_thread_id: None,
+                    source_thread_name: None,
+                    source_location: Some(url_for_meta),
+                    source_submission_id: None,
+                    imported_at: chrono::Utc::now().to_rfc3339(),
+                };
+                let _ = crate::commands::flows::write_flow_provenance(
+                    std::path::Path::new(&flow.flow_path),
+                    &provenance,
+                );
+            }
+        }
+    }
+
+    Ok(imported_name)
 }
 
 #[tauri::command]

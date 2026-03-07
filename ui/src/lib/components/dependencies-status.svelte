@@ -105,7 +105,7 @@
 			{#snippet child({ props })}
 				<Tooltip.Trigger
 					{...props}
-					class="text-primary-foreground/80 hover:text-primary-foreground rounded-md p-2 transition-colors relative"
+					class="text-white/80 hover:text-white rounded-md p-2 transition-colors relative"
 				>
 					<PackageIcon class="size-5" />
 					{#if hasIssues}
@@ -132,7 +132,7 @@
 		{/if}
 	</Tooltip.Root>
 
-	<Popover.Content class="w-80 p-0" align="end">
+	<Popover.Content class="w-80 border-slate-200 bg-white p-0 text-slate-900 shadow-xl" align="end">
 		<div class="p-4 pb-2">
 			<div class="flex items-center justify-between">
 				<h3 class="font-semibold">Dependencies</h3>
@@ -140,7 +140,7 @@
 					<RefreshCwIcon class="size-4 {refreshing ? 'animate-spin' : ''}" />
 				</Button>
 			</div>
-			<p class="text-sm text-muted-foreground mt-1">
+			<p class="mt-1 text-sm text-slate-600">
 				{#if allFound}
 					All dependencies are installed
 				{:else if missingCount > 0}
@@ -156,7 +156,7 @@
 		<div class="p-2">
 			{#if loading}
 				<div class="flex items-center justify-center py-8">
-					<Loader2Icon class="size-6 animate-spin text-muted-foreground" />
+					<Loader2Icon class="size-6 animate-spin text-slate-500" />
 				</div>
 			{:else}
 				<div class="space-y-1">
@@ -164,13 +164,13 @@
 						{@const StatusIcon = getStatusIcon(dep)}
 						{@const installUrl = getInstallUrl(dep.name)}
 						<div
-							class="flex items-center justify-between rounded-md px-3 py-2 hover:bg-muted/50 transition-colors"
+							class="flex items-center justify-between rounded-md px-3 py-2 transition-colors hover:bg-slate-100"
 						>
 							<div class="flex items-center gap-3">
 								<StatusIcon class="size-4 {getStatusColor(dep)}" />
 								<div>
 									<p class="text-sm font-medium capitalize">{dep.name}</p>
-									<p class="text-xs text-muted-foreground truncate max-w-[140px]">
+									<p class="max-w-[140px] truncate text-xs text-slate-500">
 										{getStatusText(dep)}
 									</p>
 								</div>
@@ -179,16 +179,20 @@
 								<Button
 									variant="ghost"
 									size="sm"
-									class="h-7 text-xs"
+									class="h-7 text-xs text-slate-700 hover:bg-slate-100"
 									onclick={() => openUrl(installUrl)}
 								>
 									Install
 									<ExternalLinkIcon class="size-3 ml-1" />
 								</Button>
 							{:else if dep.name.toLowerCase() === 'docker' && dep.found && dep.running === false}
-								<Badge variant="outline" class="text-amber-600 border-amber-300">Start Docker</Badge>
+								<Badge variant="outline" class="border-amber-300 bg-amber-50 text-amber-700">
+									Start Docker
+								</Badge>
 							{:else if dep.found}
-								<Badge variant="outline" class="text-emerald-600 border-emerald-300">Ready</Badge>
+								<Badge variant="outline" class="border-emerald-300 bg-emerald-50 text-emerald-700">
+									Ready
+								</Badge>
 							{/if}
 						</div>
 					{/each}
@@ -199,7 +203,7 @@
 		{#if missingCount > 0}
 			<Separator />
 			<div class="p-3">
-				<p class="text-xs text-muted-foreground">
+				<p class="text-xs text-slate-500">
 					Some features require these dependencies. Click "Install" to get started.
 				</p>
 			</div>

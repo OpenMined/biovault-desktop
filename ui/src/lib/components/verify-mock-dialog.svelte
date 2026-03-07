@@ -17,6 +17,11 @@
 		flow_path: string
 	}
 
+	interface SyftUrlResolution {
+		url: string
+		path?: string | null
+	}
+
 	interface Props {
 		open?: boolean
 		onOpenChange?: (open: boolean) => void
@@ -62,12 +67,28 @@
 		error = null
 
 		try {
+			const dedupedUrls = [...new Set((mockUrls || []).map((u) => u?.trim()).filter((u) => !!u))]
+			if (dedupedUrls.length === 0) {
+				error = 'This dataset has no mock URLs configured yet.'
+				return
+			}
+
+			const resolved = await invoke<SyftUrlResolution[]>('resolve_syft_urls_batch', {
+				urls: dedupedUrls,
+			})
+			const resolvableUrls = (resolved || []).filter((r) => !!r.path).map((r) => r.url)
+			if (resolvableUrls.length === 0) {
+				error =
+					'Mock files are listed but not synced locally yet. Refresh sync or wait for dataset assets to download, then try again.'
+				return
+			}
+
 			await invoke('run_flow', {
 				flowId: selectedFlow.id,
 				inputOverrides: {},
 				resultsDir: null,
 				selection: {
-					urls: mockUrls,
+					urls: resolvableUrls,
 					dataSource: 'network_dataset',
 					datasetName: datasetName,
 				},

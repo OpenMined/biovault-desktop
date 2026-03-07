@@ -4,6 +4,7 @@
 	import { invoke } from '@tauri-apps/api/core'
 	import { listen } from '@tauri-apps/api/event'
 	import { getVersion } from '@tauri-apps/api/app'
+	import { ModeWatcher, mode, setMode } from 'mode-watcher'
 	import * as Sidebar from '$lib/components/ui/sidebar/index.js'
 	import * as Tooltip from '$lib/components/ui/tooltip/index.js'
 	import * as Drawer from '$lib/components/ui/drawer/index.js'
@@ -37,6 +38,8 @@
 	import BellIcon from '@lucide/svelte/icons/bell'
 	import CircleHelpIcon from '@lucide/svelte/icons/circle-help'
 	import UserPlusIcon from '@lucide/svelte/icons/user-plus'
+	import MoonIcon from '@lucide/svelte/icons/moon'
+	import SunIcon from '@lucide/svelte/icons/sun'
 
 	let { children } = $props()
 	let sqlOpen = $state(false)
@@ -52,7 +55,7 @@
 	let profileSwitcherOpen = $state(false)
 	let profileGuardLoading = $state(true)
 	const headerIconButtonClass =
-		'text-primary-foreground/80 hover:text-primary-foreground flex size-9 items-center justify-center rounded-md transition-colors'
+		'text-white/80 hover:text-white flex size-9 items-center justify-center rounded-md transition-colors'
 	const requiresProfileSelection = $derived(
 		!profileGuardLoading &&
 			profilesStore.enabled &&
@@ -65,6 +68,21 @@
 			return
 		}
 		profileSwitcherOpen = next
+	}
+
+	function toggleTheme() {
+		setMode(mode.current === 'dark' ? 'light' : 'dark')
+	}
+
+	async function copyAppVersion() {
+		if (!appVersion) return
+
+		try {
+			await navigator.clipboard.writeText(appVersion)
+			toast.success('Copied to clipboard')
+		} catch {
+			toast.error('Failed to copy version')
+		}
 	}
 
 	// Send native system notification
@@ -136,18 +154,28 @@
 	})
 </script>
 
+<ModeWatcher />
 <Sidebar.Provider class="!min-h-0">
 	<div class="flex h-screen w-screen flex-col" data-testid="app-shell">
 		<!-- Full-width header/titlebar at top -->
 		<header
 			data-tauri-drag-region
 			data-testid="app-header"
-			class="bg-primary fixed top-0 left-0 right-0 z-20 flex h-10 shrink-0 items-center justify-between border-b border-primary/80 px-4"
+			class="bg-primary fixed top-0 left-0 right-0 z-20 flex h-10 shrink-0 items-center justify-between border-b border-white/15 px-4"
 		>
 			<div class="ps-20 flex items-center gap-2">
-				<span class="text-primary-foreground font-bold text-base">BioVault Desktop</span>
+				<span class="pointer-events-none select-none text-base font-bold text-white">
+					BioVault Desktop
+				</span>
 				{#if appVersion}
-					<span class="text-primary-foreground/60 text-xs">v{appVersion}</span>
+					<button
+						type="button"
+						class="cursor-pointer select-none text-xs text-white/60 transition-colors hover:text-white focus-visible:text-white"
+						aria-label={`Copy BioVault Desktop version ${appVersion} to clipboard`}
+						onclick={copyAppVersion}
+					>
+						v{appVersion}
+					</button>
 				{/if}
 			</div>
 			<Tooltip.Provider delayDuration={0}>
@@ -283,6 +311,23 @@
 					<Tooltip.Root>
 						<Tooltip.Trigger
 							class={headerIconButtonClass}
+							onclick={toggleTheme}
+						>
+							{#if mode.current === 'dark'}
+								<SunIcon class="size-5" />
+							{:else}
+								<MoonIcon class="size-5" />
+							{/if}
+						</Tooltip.Trigger>
+						<Tooltip.Content>
+							<p>{mode.current === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}</p>
+						</Tooltip.Content>
+					</Tooltip.Root>
+
+					<!--
+					<Tooltip.Root>
+						<Tooltip.Trigger
+							class={headerIconButtonClass}
 							onclick={() => (learnOpen = true)}
 						>
 							<LibraryBigIcon class="size-5" />
@@ -292,7 +337,6 @@
 						</Tooltip.Content>
 					</Tooltip.Root>
 
-					<!-- Notifications Bell with Badge -->
 					<Tooltip.Root>
 						<Tooltip.Trigger
 							class="{headerIconButtonClass} relative"
@@ -316,6 +360,7 @@
 							</p>
 						</Tooltip.Content>
 					</Tooltip.Root>
+					-->
 
 					<Tooltip.Root>
 						<Tooltip.Trigger
@@ -329,6 +374,7 @@
 						</Tooltip.Content>
 					</Tooltip.Root>
 
+					<!--
 					<Tooltip.Root>
 						<Tooltip.Trigger
 							class={headerIconButtonClass}
@@ -340,6 +386,7 @@
 							<p>Help & Support</p>
 						</Tooltip.Content>
 					</Tooltip.Root>
+					-->
 				</div>
 			</Tooltip.Provider>
 		</header>

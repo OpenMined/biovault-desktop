@@ -202,9 +202,9 @@
 </script>
 
 <Dialog.Root bind:open onOpenChange={handleOpenChange}>
-		<Dialog.Content
+	<Dialog.Content
 		class="sm:max-w-2xl"
-		showCloseButton={!required}
+		showCloseButton={false}
 		onInteractOutside={(e) => {
 			if (required) {
 				e.preventDefault()

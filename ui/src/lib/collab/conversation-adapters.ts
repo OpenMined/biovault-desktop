@@ -21,11 +21,10 @@ export interface ConversationAdapter<TMessage extends ChatMessageBase = ChatMess
 
 type InvokeFn = <T>(cmd: string, args?: InvokeArgs) => Promise<T>
 
-export function buildSpaceConversationAdapter<TMessage extends ChatMessageBase>(params: {
+export function buildThreadConversationAdapter<TMessage extends ChatMessageBase>(params: {
 	invoke: InvokeFn
-	spaceId: string
 	threadId: string
-	spaceName: string
+	threadName: string
 	participants: string[]
 	currentUserEmail: string
 	dedupeMessages: (messages: TMessage[]) => TMessage[]
@@ -33,13 +32,14 @@ export function buildSpaceConversationAdapter<TMessage extends ChatMessageBase>(
 	isEventMessage?: ((msg: TMessage) => boolean) | null
 	onAfterSend?: () => Promise<void> | void
 	attachPaths?: (paths: string[]) => Promise<void>
+	buildMessageMetadata?: (() => Record<string, unknown> | null | undefined) | null
 }): ConversationAdapter<TMessage> {
 	const normalizedCurrentUser = params.currentUserEmail.toLowerCase()
 	return {
-		key: `space:${params.spaceId}`,
+		key: `thread:${params.threadId}`,
 		currentUserEmail: params.currentUserEmail,
-		placeholder: 'Message this space...',
-		emptyText: 'No messages in this space yet',
+		placeholder: 'Message this thread...',
+		emptyText: 'No messages in this thread yet',
 		loadMessages: async () =>
 			params.dedupeMessages(
 				await params.invoke<TMessage[]>('get_thread_messages', {
@@ -50,16 +50,18 @@ export function buildSpaceConversationAdapter<TMessage extends ChatMessageBase>(
 			const recipients = params.participants.filter(
 				(p) => p.trim().toLowerCase() !== normalizedCurrentUser,
 			)
-			if (recipients.length === 0) {
-				throw new Error('This space has no recipients yet')
-			}
-			await params.invoke('send_message', {
-				request: {
-					recipients,
-					subject: params.spaceName,
-					body,
-				},
-			})
+				if (recipients.length === 0) {
+					throw new Error('This thread has no recipients yet')
+				}
+				const metadata = params.buildMessageMetadata?.() || null
+				await params.invoke('send_message', {
+					request: {
+						recipients,
+						subject: params.threadName,
+						body,
+						...(metadata ? { metadata } : {}),
+					},
+				})
 			await params.onAfterSend?.()
 		},
 		attachPaths: params.attachPaths,

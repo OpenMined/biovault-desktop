@@ -4,8 +4,6 @@
 	import { page } from '$app/state'
 	import { onMount } from 'svelte'
 	import PageHeader from '$lib/components/page-header.svelte'
-	import ConversationPanel from '$lib/components/conversation-panel.svelte'
-	import { buildSessionConversationAdapter, type ConversationAdapter } from '$lib/collab/conversation-adapters'
 	import { Button } from '$lib/components/ui/button/index.js'
 	import { Input } from '$lib/components/ui/input/index.js'
 	import { Badge } from '$lib/components/ui/badge/index.js'
@@ -50,16 +48,8 @@
 		created_at: string
 	}
 
-	interface VaultMessage {
-		id: string
-		from: string
-		body: string
-		created_at: string
-	}
-
 	let loading = $state(true)
 	let session = $state<Session | null>(null)
-	let currentUserEmail = $state('')
 
 	let jupyter = $state<SessionJupyterStatus | null>(null)
 	let jupyterLoading = $state(false)
@@ -68,8 +58,6 @@
 	let datasetsLoading = $state(false)
 	let datasetUrl = $state('')
 	let datasetAdding = $state(false)
-
-	let chatReloadSignal = $state(0)
 
 	const sessionId = $derived(page.params.sessionId || '')
 
@@ -81,15 +69,6 @@
 			hour: '2-digit',
 			minute: '2-digit',
 		})
-	}
-
-	async function getCurrentUserEmail(): Promise<string> {
-		try {
-			const settings = await invoke<{ email?: string }>('get_settings')
-			return settings?.email || ''
-		} catch {
-			return ''
-		}
 	}
 
 	async function openUrl(url: string) {
@@ -128,7 +107,6 @@
 		try {
 			await loadSession()
 			await Promise.all([loadJupyter(), loadDatasets()])
-			chatReloadSignal += 1
 		} finally {
 			loading = false
 		}
@@ -206,45 +184,18 @@
 		}
 	}
 
-	async function attachPathsToSession(paths: string[]) {
-		const clean = paths.map((p) => p.trim()).filter((p) => p.length > 0)
-		if (clean.length === 0) return
-		const copied = await invoke<string[]>('add_files_to_session', {
-			sessionId,
-			filePaths: clean,
-		})
-		const count = copied?.length || 0
-		if (count > 0) {
-			await invoke('send_session_chat_message', {
-				sessionId,
-				body: `Attached ${count} item${count === 1 ? '' : 's'} to this session.`,
-			})
-			toast.success(`Attached ${count} item${count === 1 ? '' : 's'}`)
-		}
-	}
-
-	function sessionConversationAdapter(current: Session): ConversationAdapter<VaultMessage> {
-		return buildSessionConversationAdapter<VaultMessage>({
-			invoke,
-			sessionId,
-			currentUserEmail: currentUserEmail || current.owner,
-			attachPaths: (paths: string[]) => attachPathsToSession(paths),
-		})
-	}
-
 	onMount(async () => {
-		currentUserEmail = await getCurrentUserEmail()
 		await loadWorkspace()
 	})
 </script>
 
 <div class="flex h-full flex-col bg-[radial-gradient(1000px_500px_at_0%_-10%,hsl(var(--muted))_0%,transparent_55%)]">
 	<PageHeader title={session?.name || 'Session'} description="Collaborative session workspace">
-		<Button size="sm" variant="outline" onclick={() => goto('/collaborate')}>
-			<ChevronLeftIcon class="size-4" />
-			Back to Spaces
-		</Button>
-	</PageHeader>
+			<Button size="sm" variant="outline" onclick={() => goto('/collaborate')}>
+				<ChevronLeftIcon class="size-4" />
+				Back to Messages
+			</Button>
+		</PageHeader>
 
 	<div class="min-h-0 flex-1 overflow-hidden p-4">
 		<div class="flex h-full flex-col overflow-hidden rounded-2xl border bg-background/95 shadow-sm">
@@ -266,15 +217,7 @@
 				</div>
 
 				<div class="min-h-0 flex-1 overflow-hidden p-5">
-					<div class="grid h-full gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
-						<div class="min-h-0 rounded-xl border">
-							<ConversationPanel
-								adapter={sessionConversationAdapter(session)}
-								reloadSignal={chatReloadSignal}
-							/>
-						</div>
-
-						<div class="min-h-0 space-y-4 overflow-auto pr-1">
+					<div class="min-h-0 space-y-4 overflow-auto pr-1">
 							<div class="grid gap-3 rounded-xl border p-4 text-sm md:grid-cols-2">
 								<div>
 									<p class="text-xs text-muted-foreground">Created</p>
@@ -311,7 +254,7 @@
 							</div>
 
 							<div class="space-y-3 rounded-xl border p-4">
-								<h3 class="text-sm font-semibold">Linked Datasets</h3>
+								<h3 class="text-sm font-semibold">Datasets</h3>
 								<div class="flex gap-2">
 									<Input placeholder="syft://.../dataset.yaml" bind:value={datasetUrl} />
 									<Button onclick={addDataset} disabled={datasetAdding || !datasetUrl.trim()}>
@@ -371,7 +314,6 @@
 									</div>
 								{/if}
 							</div>
-						</div>
 					</div>
 				</div>
 			{:else}

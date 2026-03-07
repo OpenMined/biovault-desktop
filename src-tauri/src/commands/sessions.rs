@@ -131,7 +131,11 @@ fn send_session_invite_message(
         &created_at,
     );
 
-    let body = biovault::messages::session::invite_body(owner, session_name, session_id);
+    // Use a neutral body so sender-side logs/cards do not read like a self-invite.
+    let body = format!(
+        "{} invited {} to the session \"{}\" (ID: {}).",
+        owner, peer_email, session_name, session_id
+    );
     let subject = biovault::messages::session::subject(session_name);
 
     if let Err(e) = messages::send_message(MessageSendRequest {

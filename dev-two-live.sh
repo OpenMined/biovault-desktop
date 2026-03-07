@@ -8,7 +8,7 @@ set -euo pipefail
 # - Cleans up sbenv daemons on exit when process mode is used.
 
 # Usage:
-#   ./dev-two-live.sh [--client EMAIL ... | --clients a,b] [--single [EMAIL]] [--stop] [--reset] [--path DIR] [--embedded|--process|--go]
+#   ./dev-two-live.sh [--client EMAIL ... | --clients a,b] [--client-home EMAIL=PATH ...] [--single [EMAIL]] [--stop] [--reset] [--path DIR] [--embedded|--process|--go]
 # Defaults: client1=client1@sandbox.local, client2=client2@sandbox.local
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,6 +31,8 @@ SANDBOX_DIR="${SANDBOX_DIR:-$ROOT_DIR/sandbox}"
 LOG_DIR="$ROOT_DIR/logs"
 SBENV_LAUNCH_PIDS=()
 CLIENTS=()
+CLIENT_HOME_EMAILS=()
+CLIENT_HOME_PATHS=()
 BACKEND="${BV_SYFTBOX_BACKEND:-embedded}"
 SINGLE_MODE=0
 SINGLE_TARGET=""
@@ -87,12 +89,25 @@ print(cfg.get("data_dir", ""))
 PY
 }
 
+resolve_client_dir() {
+  local email="$1"
+  local idx
+  for idx in "${!CLIENT_HOME_EMAILS[@]}"; do
+    if [[ "${CLIENT_HOME_EMAILS[$idx]}" == "$email" ]]; then
+      echo "${CLIENT_HOME_PATHS[$idx]}"
+      return
+    fi
+  done
+  echo "$SANDBOX_DIR/$email"
+}
+
 start_sbenv_client() {
   if [[ "$BACKEND" != "process" ]]; then
     return
   fi
   local email="$1"
-  local client_dir="$SANDBOX_DIR/$email"
+  local client_dir
+  client_dir="$(resolve_client_dir "$email")"
   local config_file="$client_dir/.syftbox/config.json"
 
   # Only wipe and reinit if --reset was passed or no config exists
@@ -132,8 +147,10 @@ start_embedded_client() {
     return
   fi
   local email="$1"
-  local client_dir="$SANDBOX_DIR/$email"
+  local client_dir
+  client_dir="$(resolve_client_dir "$email")"
   local config_yaml="$client_dir/config.yaml"
+  local syftbox_config="$client_dir/syftbox/config.json"
 
   if [[ ! -f "$config_yaml" ]]; then
     echo "[live] Skipping syftboxd start for $email (missing config.yaml; complete onboarding first)"
@@ -142,12 +159,15 @@ start_embedded_client() {
 
   echo "[live] Starting embedded syftboxd for $email"
   BIOVAULT_HOME="$client_dir" \
+    SYFTBOX_DATA_DIR="$client_dir" \
+    SYFTBOX_CONFIG_PATH="$syftbox_config" \
+    SBC_VAULT="$client_dir/.sbc" \
     SYFTBOX_EMAIL="$email" \
     SYFTBOX_SERVER_URL="$SYFTBOX_URL" \
     SYFTBOX_AUTH_ENABLED="$SYFTBOX_AUTH_ENABLED" \
     BV_SYFTBOX_BACKEND=embedded \
-    "$BV_CLI_BIN" syftboxd start >/dev/null 2>&1 || {
-      echo "[live] WARN: syftboxd failed to start for $email (check config/auth)" >&2
+    "$BV_CLI_BIN" syftboxd start || {
+      echo "[live] WARN: syftboxd failed to start for $email (check config/auth/env)" >&2
     }
 }
 
@@ -156,7 +176,8 @@ stop_sbenv_client() {
     return
   fi
   local email="$1"
-  local client_dir="$SANDBOX_DIR/$email"
+  local client_dir
+  client_dir="$(resolve_client_dir "$email")"
   local pid_file="$client_dir/.syftbox/syftbox.pid"
   if [[ -f "$pid_file" ]]; then
     local pid
@@ -173,7 +194,8 @@ provision_client() {
     start_sbenv_client "$email"
     wait_for_sbenv_daemon "$email"
   else
-    local client_dir="$SANDBOX_DIR/$email"
+    local client_dir
+    client_dir="$(resolve_client_dir "$email")"
     if (( RESET_FLAG )) && [[ -d "$client_dir" ]]; then
       echo "[live] Resetting client $email (--reset flag)"
       rm -rf "$client_dir"
@@ -231,7 +253,8 @@ ensure_bundle_under_datasites() {
 
 wait_for_sbenv_daemon() {
   local email="$1"
-  local client_dir="$SANDBOX_DIR/$email"
+  local client_dir
+  client_dir="$(resolve_client_dir "$email")"
   local pid_file="$client_dir/.syftbox/syftbox.pid"
   local log_file="$LOG_DIR/sbenv-$email.log"
   for attempt in $(seq 1 30); do
@@ -370,7 +393,8 @@ cleanup() {
   for email in "${targets[@]}"; do
     stop_sbenv_client "$email"
     # Also stop any Jupyter processes for this client
-    local client_dir="$SANDBOX_DIR/$email"
+    local client_dir
+    client_dir="$(resolve_client_dir "$email")"
     pkill -f "jupyter.*$client_dir" 2>/dev/null || true
   done
   echo "[live] Done"
@@ -397,6 +421,20 @@ main() {
         CLIENTS+=("${parsed_clients[@]}")
         shift
         ;;
+      --client-home)
+        mapping="${2:?--client-home requires EMAIL=PATH}"
+        if [[ "$mapping" != *=* ]]; then
+          echo "[live] WARN: ignoring invalid --client-home value '$mapping' (expected EMAIL=PATH)" >&2
+        else
+          email="${mapping%%=*}"
+          path="${mapping#*=}"
+          if [[ -n "$email" && -n "$path" ]]; then
+            CLIENT_HOME_EMAILS+=("$email")
+            CLIENT_HOME_PATHS+=("$path")
+          fi
+        fi
+        shift
+        ;;
       --single)
         SINGLE_MODE=1
         if [[ -n "${2:-}" && "$2" != --* ]]; then
@@ -418,7 +456,7 @@ main() {
         FIRST_RUN=1
         ;;
       -h|--help)
-        echo "Usage: $0 [--client EMAIL ... | --clients a,b] [--single [EMAIL]] [--stop] [--reset] [--path DIR] [--first-run] [--embedded|--process|--go]"
+        echo "Usage: $0 [--client EMAIL ... | --clients a,b] [--client-home EMAIL=PATH ...] [--single [EMAIL]] [--stop] [--reset] [--path DIR] [--first-run] [--embedded|--process|--go]"
         exit 0
         ;;
       *)
@@ -480,15 +518,18 @@ main() {
   if ((${#PROVISIONED[@]} > 1)); then
     local a="${PROVISIONED[0]}"
     local b="${PROVISIONED[1]}"
-    local a_dir="$SANDBOX_DIR/$a"
-    local b_dir="$SANDBOX_DIR/$b"
+    local a_dir
+    local b_dir
+    a_dir="$(resolve_client_dir "$a")"
+    b_dir="$(resolve_client_dir "$b")"
     launch_instance "$a_dir" "client1" "$a" & pid1=$!
     launch_instance "$b_dir" "client2" "$b" & pid2=$!
     echo "[live] client1 PID: $pid1"
     echo "[live] client2 PID: $pid2"
   else
     local only="${PROVISIONED[0]}"
-    local only_dir="$SANDBOX_DIR/$only"
+    local only_dir
+    only_dir="$(resolve_client_dir "$only")"
     launch_instance "$only_dir" "client" "$only" & pid1=$!
     echo "[live] client PID: $pid1"
   fi

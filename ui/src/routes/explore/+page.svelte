@@ -148,8 +148,23 @@
 		name: string
 		flow_path: string
 	}
+	interface ModuleListEntry {
+		name: string
+		version?: string | null
+	}
+	type LocalFlowTemplates = Record<string, string>
 	let installedPipelines = $state<InstalledPipeline[]>([])
 	let installingPipeline = $state<string | null>(null)
+	let localFlowTemplates = $state<LocalFlowTemplates>({})
+	let installedModuleRefs = $state<Set<string>>(new Set())
+
+	function normalizeModuleRef(value: string): string {
+		return value.trim().toLowerCase()
+	}
+
+	function isModuleInstalled(dep: string): boolean {
+		return installedModuleRefs.has(normalizeModuleRef(dep))
+	}
 
 	// Check if a template is already installed
 	function isInstalled(templateId: string): boolean {
@@ -178,15 +193,37 @@
 		}
 	}
 
+	async function loadInstalledModules() {
+		try {
+			const modules = await invoke<ModuleListEntry[]>('get_modules')
+			const refs = new Set<string>()
+			for (const module of modules || []) {
+				const name = (module.name || '').trim()
+				if (!name) continue
+				refs.add(normalizeModuleRef(name))
+				const version = typeof module.version === 'string' ? module.version.trim() : ''
+				if (version) refs.add(normalizeModuleRef(`${name}@${version}`))
+			}
+			installedModuleRefs = refs
+		} catch {
+			installedModuleRefs = new Set()
+		}
+	}
+
 	async function installPipeline(template: FlowTemplate) {
 		installingPipeline = template.id
 		try {
+			const localSource =
+				template.localTemplateKey && localFlowTemplates[template.localTemplateKey]
+					? localFlowTemplates[template.localTemplateKey]
+					: null
 			await invoke('import_flow_with_deps', {
-				url: template.sourceUrl,
+				url: localSource || template.sourceUrl,
 				nameOverride: null,
 				overwrite: true
 			})
 			await loadInstalledPipelines()
+			await loadInstalledModules()
 			toast.success(`Installed ${template.name}`, {
 				description: 'Flow is now available in your Flows page'
 			})
@@ -215,7 +252,6 @@
 	// Separate own datasets from others
 	const ownDatasets = $derived(filteredDatasets().filter((d) => d.is_own))
 	const communityDatasets = $derived(filteredDatasets().filter((d) => !d.is_own))
-
 	async function loadDatasets() {
 		try {
 			const result = await invoke<NetworkDatasetScanResult>('network_scan_datasets')
@@ -233,6 +269,14 @@
 		}
 	}
 
+	async function loadLocalFlowTemplates() {
+		try {
+			localFlowTemplates = await invoke<LocalFlowTemplates>('get_local_flow_templates')
+		} catch {
+			localFlowTemplates = {}
+		}
+	}
+
 	async function refresh() {
 		refreshing = true
 		await loadDatasets()
@@ -240,7 +284,12 @@
 	}
 
 	onMount(async () => {
-		await Promise.all([loadDatasets(), loadInstalledPipelines()])
+		await Promise.all([
+			loadDatasets(),
+			loadInstalledPipelines(),
+			loadLocalFlowTemplates(),
+			loadInstalledModules()
+		])
 		loading = false
 	})
 
@@ -344,6 +393,25 @@
 							</div>
 						</Card.Header>
 						<Card.Content class="pt-2">
+							{#if template.dependencies && template.dependencies.length > 0}
+								<div class="mb-2">
+									<div class="text-[11px] text-muted-foreground mb-1">Dependencies</div>
+									<div class="flex flex-wrap gap-1">
+										{#each template.dependencies as dep (dep)}
+											<Badge
+												variant="outline"
+												class={`text-[10px] ${
+													isModuleInstalled(dep)
+														? 'border-emerald-500/40 text-emerald-700'
+														: 'border-amber-500/40 text-amber-700'
+												}`}
+											>
+												{dep} • {isModuleInstalled(dep) ? 'installed' : 'missing'}
+											</Badge>
+										{/each}
+									</div>
+								</div>
+							{/if}
 							<div class="flex items-center justify-between">
 								<Badge variant="secondary" class="text-xs">Pipeline</Badge>
 								{#if installed}

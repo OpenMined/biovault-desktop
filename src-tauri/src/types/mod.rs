@@ -245,6 +245,7 @@ pub struct MessageSendRequest {
 #[derive(Serialize)]
 pub struct MessageThreadSummary {
     pub thread_id: String,
+    pub thread_kind: String,
     pub subject: String,
     pub participants: Vec<String>,
     pub unread_count: usize,
@@ -258,8 +259,7 @@ pub struct MessageThreadSummary {
 }
 
 #[derive(Serialize, Clone)]
-pub struct CollaborationSpace {
-    pub space_id: String,
+pub struct CollaborationThread {
     pub thread_id: String,
     pub name: String,
     pub participants: Vec<String>,

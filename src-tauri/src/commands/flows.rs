@@ -24,6 +24,66 @@ use biovault::module_spec::ModuleFile;
 #[cfg(not(target_os = "windows"))]
 use libc;
 
+const FLOW_PROVENANCE_FILE: &str = ".biovault_import.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct FlowProvenance {
+    pub source_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_sender: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_thread_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_thread_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_location: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_submission_id: Option<String>,
+    pub imported_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FlowWithProvenance {
+    #[serde(flatten)]
+    pub flow: Flow,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<FlowProvenance>,
+}
+
+pub(crate) fn read_flow_provenance(flow_dir: &Path) -> Option<FlowProvenance> {
+    let path = flow_dir.join(FLOW_PROVENANCE_FILE);
+    let raw = fs::read_to_string(path).ok()?;
+    serde_json::from_str::<FlowProvenance>(&raw).ok()
+}
+
+pub(crate) fn write_flow_provenance(
+    flow_dir: &Path,
+    provenance: &FlowProvenance,
+) -> Result<(), String> {
+    fs::create_dir_all(flow_dir)
+        .map_err(|e| format!("Failed to prepare flow directory {}: {}", flow_dir.display(), e))?;
+    let path = flow_dir.join(FLOW_PROVENANCE_FILE);
+    let raw = serde_json::to_string_pretty(provenance)
+        .map_err(|e| format!("Failed to serialize flow provenance: {}", e))?;
+    fs::write(&path, raw)
+        .map_err(|e| format!("Failed to write flow provenance {}: {}", path.display(), e))
+}
+
+fn source_owner_from_syft_url(url: &str) -> Option<String> {
+    let trimmed = url.trim();
+    if !trimmed.starts_with("syft://") {
+        return None;
+    }
+    let rest = trimmed.trim_start_matches("syft://");
+    let owner = rest.split('/').next()?.trim();
+    if owner.is_empty() {
+        None
+    } else {
+        Some(owner.to_string())
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FlowCreateRequest {
@@ -1295,6 +1355,85 @@ fn missing_local_module_paths(source_root: &Path, flow: &FlowFile) -> Vec<String
     missing
 }
 
+fn missing_registered_module_refs(flow: &FlowFile, flow_root: &Path, db: &BioVaultDb) -> Vec<String> {
+    let mut missing: Vec<String> = Vec::new();
+    let mut seen = HashSet::new();
+
+    for step in &flow.spec.steps {
+        let Some(uses) = step.uses.as_ref() else {
+            continue;
+        };
+
+        let module_ref = match uses {
+            FlowStepUses::Name(name) => name.trim().to_string(),
+            FlowStepUses::Ref(_) => continue,
+        };
+
+        if module_ref.is_empty() || !seen.insert(module_ref.clone()) {
+            continue;
+        }
+
+        if module_ref.starts_with("http://")
+            || module_ref.starts_with("https://")
+            || module_ref.starts_with("syft://")
+        {
+            continue;
+        }
+
+        if module_ref.starts_with('/') {
+            if PathBuf::from(&module_ref).exists() {
+                continue;
+            }
+            missing.push(module_ref);
+            continue;
+        }
+
+        if module_ref.starts_with('.') || module_ref.contains('/') || module_ref.contains('\\') {
+            if flow_root.join(&module_ref).exists() {
+                continue;
+            }
+            missing.push(module_ref);
+            continue;
+        }
+
+        // If the flow explicitly declares this module alias in spec.modules,
+        // trust that declaration (legacy imports rely on this indirection).
+        if flow.spec.modules.contains_key(&module_ref) {
+            continue;
+        }
+
+        // Support module_paths-based layouts where modules are resolved at runtime
+        // from a local folder instead of DB registration.
+        let found_in_module_paths = flow.spec.module_paths.iter().any(|base| {
+            let base = base.trim();
+            if base.is_empty() {
+                return false;
+            }
+            let base_path = if Path::new(base).is_absolute() {
+                PathBuf::from(base)
+            } else {
+                flow_root.join(base)
+            };
+            let direct = base_path.join(&module_ref);
+            module_yaml_exists(&direct)
+        });
+        if found_in_module_paths {
+            continue;
+        }
+
+        let found = db
+            .get_module(&module_ref)
+            .map(|m| m.is_some())
+            .unwrap_or(false);
+        if !found {
+            missing.push(module_ref);
+        }
+    }
+
+    missing.sort();
+    missing
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FlowRequestSyncStatus {
@@ -1391,11 +1530,20 @@ fn append_flow_log(window: Option<&tauri::WebviewWindow>, log_path: &Path, messa
 }
 
 #[tauri::command]
-pub async fn get_flows(state: tauri::State<'_, AppState>) -> Result<Vec<Flow>, String> {
+pub async fn get_flows(state: tauri::State<'_, AppState>) -> Result<Vec<FlowWithProvenance>, String> {
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
     let flows = biovault_db.list_flows().map_err(|e| e.to_string())?;
+    drop(biovault_db);
 
-    Ok(flows)
+    let with_provenance = flows
+        .into_iter()
+        .map(|flow| {
+            let provenance = read_flow_provenance(Path::new(&flow.flow_path));
+            FlowWithProvenance { flow, provenance }
+        })
+        .collect();
+
+    Ok(with_provenance)
 }
 
 #[tauri::command]
@@ -3852,16 +4000,24 @@ pub async fn import_flow_from_message(
     name: String,
     _version: String,
     spec: serde_json::Value,
+    overwrite: Option<bool>,
 ) -> Result<i64, String> {
+    let overwrite = overwrite.unwrap_or(false);
     let flows_dir = get_flows_dir()?;
     let flow_dir = flows_dir.join(&name);
 
     // Check if flow already exists
     if flow_dir.exists() {
-        // For now, we'll overwrite - in the future could prompt user
-        // or rename with version suffix
-        fs::remove_dir_all(&flow_dir)
-            .map_err(|e| format!("Failed to remove existing flow: {}", e))?;
+        if overwrite {
+            fs::remove_dir_all(&flow_dir)
+                .map_err(|e| format!("Failed to remove existing flow: {}", e))?;
+        } else {
+            return Err(format!(
+                "Flow '{}' already exists at {}. Use overwrite to replace.",
+                name,
+                flow_dir.display()
+            ));
+        }
     }
 
     // Create flow directory
@@ -3880,11 +4036,21 @@ pub async fn import_flow_from_message(
     let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
     let flow_dir_str = flow_dir.to_string_lossy().to_string();
 
-    // Check if flow with same name exists in DB - delete then re-register
+    // Check if flow with same name/path exists in DB
     let existing = db.list_flows().map_err(|e| e.to_string())?;
-    if let Some(existing_flow) = existing.iter().find(|p| p.name == name) {
-        db.delete_flow(existing_flow.id)
-            .map_err(|e| format!("Failed to remove existing flow from database: {}", e))?;
+    if let Some(existing_flow) = existing
+        .iter()
+        .find(|p| p.name == name || p.flow_path == flow_dir_str)
+    {
+        if overwrite {
+            db.delete_flow(existing_flow.id)
+                .map_err(|e| format!("Failed to remove existing flow from database: {}", e))?;
+        } else {
+            return Err(format!(
+                "Flow '{}' already exists in database. Use overwrite to replace.",
+                name
+            ));
+        }
     }
 
     // Register flow
@@ -3971,6 +4137,9 @@ pub async fn import_flow_from_request(
     name: Option<String>,
     flow_location: String,
     overwrite: bool,
+    source_sender: Option<String>,
+    source_thread_id: Option<String>,
+    source_thread_name: Option<String>,
 ) -> Result<Flow, String> {
     let config =
         biovault::config::Config::load().map_err(|e| format!("Failed to load config: {}", e))?;
@@ -3993,10 +4162,53 @@ pub async fn import_flow_from_request(
         return Err(format!("flow.yaml not found in {}", source_root.display()));
     }
 
-    let spec = load_flow_spec_from_storage(&storage, &flow_yaml)?;
+    let flow_file = load_flow_file_from_storage(&storage, &flow_yaml)?;
+    let spec = flow_file.to_flow_spec().map_err(|e| format!("Failed to parse flow spec: {}", e))?;
     let resolved_name = name
         .filter(|n| !n.trim().is_empty())
         .unwrap_or(spec.name.clone());
+
+    // Prefer dependency-aware import (same behavior as Explore installs).
+    let dep_flow_location = flow_location.clone();
+    let dep_flow_name = resolved_name.clone();
+    let dep_import_result = tauri::async_runtime::spawn_blocking(move || {
+        tauri::async_runtime::block_on(async {
+            biovault::cli::commands::module_management::import_flow_with_deps(
+                &dep_flow_location,
+                Some(dep_flow_name),
+                overwrite,
+            )
+            .await
+        })
+    })
+    .await
+    .map_err(|e| format!("Failed to run dependency-aware import: {}", e))?;
+    if dep_import_result.is_ok() {
+        let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+        let imported = db
+            .list_flows()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|f| f.name == resolved_name)
+            .ok_or_else(|| format!("Flow '{}' imported but not found in database", resolved_name))?;
+        drop(db);
+
+        let provenance = FlowProvenance {
+            source_type: "thread_request".to_string(),
+            source_sender: source_sender.or_else(|| source_owner_from_syft_url(&flow_location)),
+            source_thread_id,
+            source_thread_name,
+            source_location: Some(flow_location.clone()),
+            source_submission_id: source_root
+                .file_name()
+                .and_then(|v| v.to_str())
+                .map(|s| s.to_string()),
+            imported_at: chrono::Utc::now().to_rfc3339(),
+        };
+        let _ = write_flow_provenance(Path::new(&imported.flow_path), &provenance);
+
+        return Ok(imported);
+    }
 
     let flows_dir = get_flows_dir()?;
     fs::create_dir_all(&flows_dir)
@@ -4017,6 +4229,18 @@ pub async fn import_flow_from_request(
     }
 
     copy_flow_request_dir(&storage, &source_root, &dest_dir)?;
+
+    // Register modules declared within the imported flow directory itself
+    // (parity with create_flow/import-from-file path).
+    {
+        let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+        biovault::cli::commands::module_management::register_flow_modules_from_dir(
+            &dest_dir,
+            &db,
+            overwrite,
+        )
+        .map_err(|e| e.to_string())?;
+    }
 
     let modules_source = source_root.join("modules");
     if modules_source.exists() {
@@ -4133,6 +4357,17 @@ pub async fn import_flow_from_request(
         }
     }
 
+    {
+        let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+        let missing_modules = missing_registered_module_refs(&flow_file, &dest_dir, &db);
+        if !missing_modules.is_empty() {
+            return Err(format!(
+                "Imported flow is missing module dependencies: {}. Ask sender to bundle modules or import via Explore/dependency-aware path.",
+                missing_modules.join(", ")
+            ));
+        }
+    }
+
     let flow_dir_str = dest_dir.to_string_lossy().to_string();
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
 
@@ -4155,14 +4390,30 @@ pub async fn import_flow_from_request(
 
     let timestamp = chrono::Local::now().to_rfc3339();
 
-    Ok(Flow {
+    let flow = Flow {
         id,
         name: resolved_name,
         flow_path: flow_dir_str,
         created_at: timestamp.clone(),
         updated_at: timestamp,
         spec: Some(spec),
-    })
+    };
+
+    let provenance = FlowProvenance {
+        source_type: "thread_request".to_string(),
+        source_sender: source_sender.or_else(|| source_owner_from_syft_url(&flow_location)),
+        source_thread_id,
+        source_thread_name,
+        source_location: Some(flow_location),
+        source_submission_id: source_root
+            .file_name()
+            .and_then(|v| v.to_str())
+            .map(|s| s.to_string()),
+        imported_at: chrono::Utc::now().to_rfc3339(),
+    };
+    let _ = write_flow_provenance(Path::new(&flow.flow_path), &provenance);
+
+    Ok(flow)
 }
 
 // ============================================================================

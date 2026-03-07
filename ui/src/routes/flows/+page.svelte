@@ -22,12 +22,23 @@
 		steps?: Array<{ id: string }>
 	}
 
+	interface FlowProvenance {
+		source_type: string
+		source_sender?: string | null
+		source_thread_id?: string | null
+		source_thread_name?: string | null
+		source_location?: string | null
+		source_submission_id?: string | null
+		imported_at: string
+	}
+
 	interface Pipeline {
 		id: number
 		name: string
 		flow_path: string
 		spec?: PipelineSpec
 		created_at?: string
+		provenance?: FlowProvenance | null
 	}
 
 	let flows: Pipeline[] = $state([])
@@ -35,6 +46,7 @@
 	let error: string | null = $state(null)
 	let createDialogOpen = $state(false)
 	let deletingFlowId: number | null = $state(null)
+	let sourceFilter = $state<'all' | 'thread' | 'explore' | 'local'>('all')
 
 	async function loadFlows() {
 		try {
@@ -99,6 +111,40 @@
 	function getInputCount(flow: Pipeline): number {
 		return flow.spec?.inputs ? Object.keys(flow.spec.inputs).length : 0
 	}
+
+	function flowSource(flow: Pipeline): 'thread' | 'explore' | 'local' {
+		const source = flow.provenance?.source_type || ''
+		if (source === 'thread_request') return 'thread'
+		if (source === 'explore') return 'explore'
+		return 'local'
+	}
+
+	const filteredFlows = $derived.by(() => {
+		if (sourceFilter === 'all') return flows
+		return flows.filter((flow) => flowSource(flow) === sourceFilter)
+	})
+
+	function sourceBadgeText(flow: Pipeline): string {
+		const source = flowSource(flow)
+		if (source === 'thread') return 'From Thread'
+		if (source === 'explore') return 'From Explore'
+		return 'Local'
+	}
+
+	function sourceMetaText(flow: Pipeline): string | null {
+		const p = flow.provenance
+		if (!p) return null
+		if (p.source_type === 'thread_request') {
+			const from = p.source_sender ? `from ${p.source_sender}` : 'from thread'
+			const when = p.imported_at ? ` • ${new Date(p.imported_at).toLocaleString()}` : ''
+			return `${from}${when}`
+		}
+		if (p.source_type === 'explore') {
+			const when = p.imported_at ? `Imported ${new Date(p.imported_at).toLocaleString()}` : 'Imported from Explore'
+			return when
+		}
+		return null
+	}
 </script>
 
 <div class="flex h-full flex-col">
@@ -110,6 +156,12 @@
 	</PageHeader>
 
 	<div class="flex-1 overflow-auto p-6">
+			<div class="mb-4 inline-flex items-center gap-1 rounded-md border bg-background p-1">
+				<Button size="sm" variant={sourceFilter === 'all' ? 'secondary' : 'ghost'} class="h-7 px-2 text-xs" onclick={() => (sourceFilter = 'all')}>All</Button>
+				<Button size="sm" variant={sourceFilter === 'thread' ? 'secondary' : 'ghost'} class="h-7 px-2 text-xs" onclick={() => (sourceFilter = 'thread')}>From Thread</Button>
+				<Button size="sm" variant={sourceFilter === 'explore' ? 'secondary' : 'ghost'} class="h-7 px-2 text-xs" onclick={() => (sourceFilter = 'explore')}>From Explore</Button>
+				<Button size="sm" variant={sourceFilter === 'local' ? 'secondary' : 'ghost'} class="h-7 px-2 text-xs" onclick={() => (sourceFilter = 'local')}>Local</Button>
+			</div>
 		{#if loading}
 			<div class="flex h-full items-center justify-center">
 				<p class="text-muted-foreground">Loading flows...</p>
@@ -118,7 +170,7 @@
 			<div class="flex h-full items-center justify-center">
 				<p class="text-destructive">Error: {error}</p>
 			</div>
-		{:else if flows.length === 0}
+		{:else if filteredFlows.length === 0}
 			<div class="flex h-full items-center justify-center">
 				<Empty.Root>
 					<Empty.Header>
@@ -143,7 +195,7 @@
 			</div>
 		{:else}
 			<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-				{#each flows as flow (flow.id)}
+				{#each filteredFlows as flow (flow.id)}
 					{@const style = getFlowStyle(flow.name)}
 					{@const Icon = style.icon}
 					<button
@@ -159,13 +211,19 @@
 								<Icon class="size-6" />
 							</div>
 							<div class="flex-1 min-w-0">
-								<h3 class="font-semibold truncate">{flow.name}</h3>
+								<div class="flex items-center gap-2">
+									<h3 class="font-semibold truncate">{flow.name}</h3>
+									<span class="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">{sourceBadgeText(flow)}</span>
+								</div>
 								<p class="text-muted-foreground text-sm mt-0.5">
 									{getStepCount(flow)} steps
 									{#if getInputCount(flow) > 0}
 										• {getInputCount(flow)} inputs
 									{/if}
 								</p>
+								{#if sourceMetaText(flow)}
+									<p class="text-[11px] text-muted-foreground mt-0.5 truncate">{sourceMetaText(flow)}</p>
+								{/if}
 							</div>
 							<Button
 								type="button"

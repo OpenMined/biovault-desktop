@@ -1,5 +1,5 @@
 use crate::types::{
-    BatchedMessageRefreshResult, CollaborationSpace, ContactTimelineEvent, MessageFilterScope,
+    BatchedMessageRefreshResult, CollaborationThread, ContactTimelineEvent, MessageFilterScope,
     MessageSendRequest, MessageSyncResult, MessageThreadSummary,
 };
 use biovault::cli::commands::messages::{get_message_db_path, init_message_system};
@@ -103,6 +103,52 @@ fn classify_timeline_kind(message: &VaultMessage) -> String {
     "message".to_string()
 }
 
+fn classify_thread_kind(messages: &[VaultMessage], participant_count: usize) -> String {
+    let has_session = messages.iter().any(|msg| {
+        msg.metadata.as_ref().is_some_and(|meta| {
+            meta.get("session_chat").is_some()
+                || meta.get("session_invite").is_some()
+                || meta.get("session_invite_response").is_some()
+        })
+    });
+    if has_session {
+        return "session".to_string();
+    }
+
+    let has_flow = messages.iter().any(|msg| {
+        msg.metadata
+            .as_ref()
+            .is_some_and(|meta| meta.get("flow_request").is_some() || meta.get("flow_results").is_some())
+    });
+    if has_flow {
+        return "flow".to_string();
+    }
+
+    let has_group = messages.iter().any(|msg| {
+        extract_group_chat_participants(msg).len() >= 2
+    });
+    if has_group {
+        return "group".to_string();
+    }
+
+    if participant_count <= 2 {
+        "direct".to_string()
+    } else {
+        "thread".to_string()
+    }
+}
+
+fn participant_signature(values: &[String]) -> String {
+    let mut normalized: Vec<String> = values
+        .iter()
+        .map(|v| v.trim().to_lowercase())
+        .filter(|v| !v.is_empty())
+        .collect();
+    normalized.sort();
+    normalized.dedup();
+    normalized.join("|")
+}
+
 fn extract_session_context(message: &VaultMessage) -> (Option<String>, Option<String>) {
     let Some(meta) = &message.metadata else {
         return (None, None);
@@ -180,50 +226,30 @@ fn extract_group_chat_name(message: &VaultMessage) -> Option<String> {
         .map(str::to_string)
 }
 
+fn conversation_participant_signature(message: &VaultMessage) -> Option<String> {
+    let mut participants = extract_group_chat_participants(message);
+    if participants.len() < 2 {
+        if !message.from.trim().is_empty() {
+            participants.push(message.from.clone());
+        }
+        if !message.to.trim().is_empty() {
+            participants.push(message.to.clone());
+        }
+    }
+
+    let signature = participant_signature(&participants);
+    if signature.is_empty() {
+        None
+    } else {
+        Some(signature)
+    }
+}
+
 fn syftbox_storage(config: &biovault::config::Config) -> Result<SyftBoxStorage, String> {
     let data_dir = config
         .get_syftbox_data_dir()
         .map_err(|e| format!("Failed to resolve SyftBox data dir: {}", e))?;
     Ok(SyftBoxStorage::new(&data_dir))
-}
-
-fn should_attempt_identity_recovery(sync_error: &str) -> bool {
-    let lower = sync_error.to_lowercase();
-    lower.contains("no identities found in vault")
-        || (lower.contains("sbc key generate") && lower.contains("vault"))
-}
-
-fn try_auto_provision_local_identity(config: &biovault::config::Config) -> Result<bool, String> {
-    let email = config.email.trim();
-    if email.is_empty() || email == "setup@pending" {
-        return Ok(false);
-    }
-
-    let data_root = config
-        .get_syftbox_data_dir()
-        .unwrap_or_else(|_| {
-            biovault::config::get_biovault_home().unwrap_or_else(|_| PathBuf::from("BioVault"))
-        });
-    let encrypted_root = syftbox_sdk::syftbox::sbc::resolve_encrypted_root(&data_root);
-
-    let vault_path = match biovault::config::resolve_sbc_vault_path() {
-        Ok(path) => path,
-        Err(_) => {
-            let home = biovault::config::get_biovault_home()
-                .unwrap_or_else(|_| PathBuf::from("BioVault"));
-            syftbox_sdk::syftbox::sbc::vault_path_for_home(&home)
-        }
-    };
-
-    biovault::syftbox::sbc::provision_local_identity_with_options(
-        email,
-        &encrypted_root,
-        Some(&vault_path),
-        false,
-    )
-    .map_err(|e| format!("Failed to auto-provision local identity: {e}"))?;
-
-    Ok(true)
 }
 
 fn should_skip_flow_path(rel: &Path) -> bool {
@@ -744,6 +770,9 @@ pub fn list_message_threads(
                 add_group_chat_participants(&msg.metadata, &mut participants);
             }
 
+            let participants_vec: Vec<String> = participants.into_iter().collect();
+            let thread_kind = classify_thread_kind(&msgs, participants_vec.len());
+
             let subject = last_msg
                 .subject
                 .clone()
@@ -763,8 +792,9 @@ pub fn list_message_threads(
 
             Some(MessageThreadSummary {
                 thread_id,
+                thread_kind,
                 subject,
-                participants: participants.into_iter().collect(),
+                participants: participants_vec,
                 unread_count,
                 last_message_at: Some(last_msg.created_at.to_rfc3339()),
                 last_message_preview: preview,
@@ -809,6 +839,32 @@ pub fn get_thread_messages(thread_id: String) -> Result<Vec<VaultMessage>, Strin
         .get_thread_messages(&canonical_id)
         .map_err(|e| format!("Failed to load thread messages: {}", e))?;
 
+    // Thread conversations can historically contain messages split across multiple
+    // thread IDs for the same participant set (e.g. flow requests from older clients).
+    // Merge by participant signature so the thread timeline remains complete.
+    let anchor_signature = messages
+        .iter()
+        .find_map(conversation_participant_signature)
+        .or_else(|| fallback_message.as_ref().and_then(conversation_participant_signature));
+    if let Some(anchor_signature) = anchor_signature {
+        let mut merged = db
+            .list_messages(None)
+            .map_err(|e| format!("Failed to list messages: {}", e))?
+            .into_iter()
+            .filter(|m| {
+                conversation_participant_signature(m)
+                    .map(|sig| sig == anchor_signature)
+                    .unwrap_or(false)
+            })
+            .collect::<Vec<_>>();
+        merged.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        let mut seen = HashSet::new();
+        merged.retain(|m| seen.insert(m.id.clone()));
+        if !merged.is_empty() {
+            messages = merged;
+        }
+    }
+
     if messages.is_empty() {
         if let Some(msg) = fallback_message {
             messages.push(msg);
@@ -830,7 +886,7 @@ pub fn get_thread_messages(thread_id: String) -> Result<Vec<VaultMessage>, Strin
 }
 
 #[tauri::command]
-pub fn list_spaces(limit: Option<usize>) -> Result<Vec<CollaborationSpace>, String> {
+pub fn list_threads(limit: Option<usize>) -> Result<Vec<CollaborationThread>, String> {
     let config = load_config()?;
     let db_path = get_message_db_path(&config)
         .map_err(|e| format!("Failed to locate message database: {}", e))?;
@@ -841,17 +897,17 @@ pub fn list_spaces(limit: Option<usize>) -> Result<Vec<CollaborationSpace>, Stri
         .list_messages(None)
         .map_err(|e| format!("Failed to list messages: {}", e))?;
 
-    let mut spaces_map: HashMap<String, Vec<VaultMessage>> = HashMap::new();
+    let mut threads_map: HashMap<String, Vec<VaultMessage>> = HashMap::new();
     for msg in messages.drain(..) {
         let participants = extract_group_chat_participants(&msg);
         if participants.len() < 2 {
             continue;
         }
         let key = msg.thread_id.clone().unwrap_or_else(|| msg.id.clone());
-        spaces_map.entry(key).or_default().push(msg);
+        threads_map.entry(key).or_default().push(msg);
     }
 
-    let mut spaces: Vec<CollaborationSpace> = spaces_map
+    let mut threads: Vec<CollaborationThread> = threads_map
         .into_iter()
         .filter_map(|(thread_id, mut msgs)| {
             if msgs.is_empty() {
@@ -882,7 +938,7 @@ pub fn list_spaces(limit: Option<usize>) -> Result<Vec<CollaborationSpace>, Stri
                     .cloned()
                     .collect();
                 if others.is_empty() {
-                    "Group Space".to_string()
+                    "Group Thread".to_string()
                 } else if others.len() <= 2 {
                     others.join(", ")
                 } else {
@@ -910,8 +966,7 @@ pub fn list_spaces(limit: Option<usize>) -> Result<Vec<CollaborationSpace>, Stri
                 })
                 .count();
 
-            Some(CollaborationSpace {
-                space_id: thread_id.clone(),
+            Some(CollaborationThread {
                 thread_id,
                 name: explicit_group_name.unwrap_or(default_name),
                 member_count: participants_vec.len(),
@@ -923,12 +978,12 @@ pub fn list_spaces(limit: Option<usize>) -> Result<Vec<CollaborationSpace>, Stri
         })
         .collect();
 
-    spaces.sort_by(|a, b| b.last_activity_at.cmp(&a.last_activity_at));
+    threads.sort_by(|a, b| b.last_activity_at.cmp(&a.last_activity_at));
     if let Some(limit) = limit {
-        spaces.truncate(limit);
+        threads.truncate(limit);
     }
 
-    Ok(spaces)
+    Ok(threads)
 }
 
 #[tauri::command]
@@ -1000,13 +1055,7 @@ pub fn get_contact_timeline(
 
 /// Generate a deterministic thread ID for group chats based on sorted participants
 fn generate_group_thread_id(participants: &[String]) -> String {
-    let mut sorted: Vec<&str> = participants.iter().map(|s| s.as_str()).collect();
-    sorted.sort();
-    let joined = sorted.join(",");
-    let mut hasher = Sha256::new();
-    hasher.update(joined.as_bytes());
-    let hash = hex::encode(hasher.finalize());
-    format!("group-{}", &hash[..16])
+    biovault::messages::deterministic_group_thread_id(participants)
 }
 
 #[tauri::command]
@@ -1294,20 +1343,9 @@ pub fn sync_messages() -> Result<MessageSyncResult, String> {
     let (_db, sync) = init_message_system(&config)
         .map_err(|e| format!("Failed to initialize messaging: {}", e))?;
 
-    let (ids, count) = match sync.sync_quiet() {
-        Ok(result) => result,
-        Err(err) => {
-            let err_text = err.to_string();
-            if should_attempt_identity_recovery(&err_text)
-                && try_auto_provision_local_identity(&config)?
-            {
-                sync.sync_quiet()
-                    .map_err(|e| format!("Failed to sync messages after auto key setup: {}", e))?
-            } else {
-                return Err(format!("Failed to sync messages: {}", err_text));
-            }
-        }
-    };
+    let (ids, count) = sync
+        .sync_quiet()
+        .map_err(|e| format!("Failed to sync messages: {}", e))?;
 
     Ok(MessageSyncResult {
         new_message_ids: ids,
@@ -1496,21 +1534,9 @@ pub fn sync_messages_with_failures() -> Result<SyncWithFailuresResult, String> {
     let (_db, sync) = init_message_system(&config)
         .map_err(|e| format!("Failed to initialize messaging: {}", e))?;
 
-    let (ids, count, new_failed) = match sync.sync_quiet_with_failures() {
-        Ok(result) => result,
-        Err(err) => {
-            let err_text = err.to_string();
-            if should_attempt_identity_recovery(&err_text)
-                && try_auto_provision_local_identity(&config)?
-            {
-                sync.sync_quiet_with_failures().map_err(|e| {
-                    format!("Failed to sync messages after auto key setup: {}", e)
-                })?
-            } else {
-                return Err(format!("Failed to sync messages: {}", err_text));
-            }
-        }
-    };
+    let (ids, count, new_failed) = sync
+        .sync_quiet_with_failures()
+        .map_err(|e| format!("Failed to sync messages: {}", e))?;
 
     let total_failed = sync.count_failed_messages().unwrap_or(0);
 
@@ -1678,6 +1704,33 @@ pub fn send_flow_request(
 
     let collab = run_id.is_some() || datasites.is_some();
 
+    // Reuse the same deterministic 1:1 thread model as participant threads.
+    let mut participants = vec![config.email.clone(), recipient.clone()];
+    participants.sort();
+    participants.dedup();
+    let direct_thread_id = generate_group_thread_id(&participants);
+    let participants_sig = participant_signature(&participants);
+    let existing_thread_id = db
+        .list_messages(None)
+        .ok()
+        .and_then(|messages| {
+            messages
+                .into_iter()
+                .filter_map(|msg| {
+                    let msg_participants = extract_group_chat_participants(&msg);
+                    if msg_participants.len() < 2 {
+                        return None;
+                    }
+                    if participant_signature(&msg_participants) != participants_sig {
+                        return None;
+                    }
+                    let thread_id = msg.thread_id.clone().filter(|t| !t.trim().is_empty())?;
+                    Some((msg.created_at, thread_id))
+                })
+                .max_by(|(a, _), (b, _)| a.cmp(b))
+                .map(|(_, thread_id)| thread_id)
+        });
+
     // Create the message with flow request metadata
     let mut msg = VaultMessage::new(config.email.clone(), recipient.clone(), message);
 
@@ -1685,6 +1738,10 @@ pub fn send_flow_request(
 
     // Set metadata with flow info
     msg.metadata = Some(serde_json::json!({
+        "group_chat": {
+            "participants": participants,
+            "is_group": true
+        },
         "flow_request": {
             "flow_name": flow_name,
             "flow_version": flow_version,
@@ -1702,8 +1759,8 @@ pub fn send_flow_request(
         }
     }));
 
-    // Use thread_id based on flow + dataset for grouping related messages
-    msg.thread_id = Some(format!("flow-{}:{}", flow_name, dataset_name));
+    // Keep flow requests in the same direct conversation thread as other messages.
+    msg.thread_id = Some(existing_thread_id.unwrap_or(direct_thread_id));
 
     // Insert and send
     db.insert_message(&msg)
@@ -2147,21 +2204,9 @@ pub fn refresh_messages_batched(
         .map_err(|e| format!("Failed to initialize messaging: {}", e))?;
 
     // Sync messages
-    let (ids, count, new_failed) = match sync.sync_quiet_with_failures() {
-        Ok(result) => result,
-        Err(err) => {
-            let err_text = err.to_string();
-            if should_attempt_identity_recovery(&err_text)
-                && try_auto_provision_local_identity(&config)?
-            {
-                sync.sync_quiet_with_failures().map_err(|e| {
-                    format!("Failed to sync messages after auto key setup: {}", e)
-                })?
-            } else {
-                return Err(format!("Failed to sync messages: {}", err_text));
-            }
-        }
-    };
+    let (ids, count, new_failed) = sync
+        .sync_quiet_with_failures()
+        .map_err(|e| format!("Failed to sync messages: {}", e))?;
 
     let total_failed = sync.count_failed_messages().unwrap_or(0);
 
@@ -2247,6 +2292,9 @@ pub fn refresh_messages_batched(
                 add_group_chat_participants(&msg.metadata, &mut participants);
             }
 
+            let participants_vec: Vec<String> = participants.into_iter().collect();
+            let thread_kind = classify_thread_kind(&msgs, participants_vec.len());
+
             let subject = last_msg
                 .subject
                 .clone()
@@ -2266,8 +2314,9 @@ pub fn refresh_messages_batched(
 
             Some(MessageThreadSummary {
                 thread_id,
+                thread_kind,
                 subject,
-                participants: participants.into_iter().collect(),
+                participants: participants_vec,
                 unread_count,
                 last_message_at: Some(last_msg.created_at.to_rfc3339()),
                 last_message_preview: preview,

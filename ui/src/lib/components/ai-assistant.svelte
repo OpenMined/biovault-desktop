@@ -565,7 +565,7 @@ When users ask you to do something (create a pipeline, list datasets, etc.), USE
 Available features:
 - Pipelines/Flows: Data analysis workflows
 - Datasets: Data collections for analysis  
-- Sessions: Collaboration spaces with other users
+- Sessions: Collaboration threads with other users
 - Messages: Secure communication
 - Results/Runs: Pipeline execution history
 

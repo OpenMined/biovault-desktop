@@ -176,32 +176,34 @@
 	{#snippet actions(msg)}
 		{@render actions?.(msg)}
 	{/snippet}
-	{#snippet composerPrefix()}
-		<DropdownMenu.Root>
-			<DropdownMenu.Trigger>
-				<Button
-					size="icon"
-					variant="ghost"
-					class="size-7 rounded-full"
-					disabled={!adapter.attachPaths || attaching}
-				>
-					{#if attaching}
-						<Loader2Icon class="size-3.5 animate-spin" />
-					{:else}
-						<PlusIcon class="size-4 text-emerald-700" />
-					{/if}
-				</Button>
-			</DropdownMenu.Trigger>
-			<DropdownMenu.Content class="w-52">
-				<DropdownMenu.Item onclick={pickAndAttachFiles} disabled={!adapter.attachPaths}>
-					<PaperclipIcon class="mr-2 size-4" />
-					Attach files
-				</DropdownMenu.Item>
-				<DropdownMenu.Item onclick={pickAndAttachFolder} disabled={!adapter.attachPaths}>
-					<FolderUpIcon class="mr-2 size-4" />
-					Attach folder
-				</DropdownMenu.Item>
-			</DropdownMenu.Content>
-		</DropdownMenu.Root>
-	{/snippet}
+		{#snippet composerPrefix()}
+			{#if adapter.attachPaths}
+				<DropdownMenu.Root>
+					<DropdownMenu.Trigger>
+						<Button
+							size="icon"
+							variant="ghost"
+							class="size-7 rounded-full"
+							disabled={!adapter.attachPaths || attaching}
+						>
+							{#if attaching}
+								<Loader2Icon class="size-3.5 animate-spin" />
+							{:else}
+								<PlusIcon class="size-4 text-emerald-700" />
+							{/if}
+						</Button>
+					</DropdownMenu.Trigger>
+					<DropdownMenu.Content class="w-52">
+						<DropdownMenu.Item onclick={pickAndAttachFiles} disabled={!adapter.attachPaths}>
+							<PaperclipIcon class="mr-2 size-4" />
+							Attach files
+						</DropdownMenu.Item>
+						<DropdownMenu.Item onclick={pickAndAttachFolder} disabled={!adapter.attachPaths}>
+							<FolderUpIcon class="mr-2 size-4" />
+							Attach folder
+						</DropdownMenu.Item>
+					</DropdownMenu.Content>
+				</DropdownMenu.Root>
+			{/if}
+		{/snippet}
 </ChatThreadPanel>

@@ -1594,7 +1594,7 @@ pub fn run() {
             delete_participants_bulk,
             // Messages commands
             list_message_threads,
-            list_spaces,
+            list_threads,
             get_thread_messages,
             get_contact_timeline,
             send_message,
