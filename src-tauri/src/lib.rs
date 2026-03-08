@@ -1576,7 +1576,11 @@ pub fn run() {
             fetch_reference_data_with_progress,
             // Dataset commands
             list_datasets_with_assets,
+            analyze_dataset_assets,
+            analyze_dataset_assets_summary,
+            summarize_dataset_processing,
             upsert_dataset_manifest,
+            save_dataset_from_ui,
             delete_dataset,
             publish_dataset,
             unpublish_dataset,

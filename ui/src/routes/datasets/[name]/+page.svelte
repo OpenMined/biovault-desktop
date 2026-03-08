@@ -30,7 +30,6 @@
 	import * as Dialog from '$lib/components/ui/dialog/index.js'
 	import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left'
 	import PackageIcon from '@lucide/svelte/icons/package'
-	import PlusIcon from '@lucide/svelte/icons/plus'
 	import SaveIcon from '@lucide/svelte/icons/save'
 	import TrashIcon from '@lucide/svelte/icons/trash-2'
 	import FileIcon from '@lucide/svelte/icons/file'
@@ -63,6 +62,7 @@
 		metadata: Record<string, string>
 		exists: boolean
 		mockPath?: string
+		mockUrl?: string
 		mockExists: boolean
 	}
 
@@ -79,6 +79,7 @@
 		mock_path?: string
 		resolved_private_path?: string
 		resolved_mock_path?: string
+		extra?: Record<string, unknown>
 	}
 
 	interface DatasetWithAssets {
@@ -108,20 +109,60 @@
 		description: string
 	}
 
-	interface StagedImportRow {
-		rowId: string
-		path: string
-		filename: string
-		extension: string
-		detectedType: string
-		confidence: 'high' | 'medium' | 'low'
-		participantId: string
-		assetName: string
-		fileRole: 'primary' | 'index' | 'reference' | 'mock' | 'unknown'
-		warnings: string[]
+	interface DatasetUiExtra {
+		enabled_columns?: string[]
+		custom_columns?: string[]
 	}
 
+	interface DerivedDatasetAsset {
+		path: string
+		asset_name: string
+		file_type: string
+		participant_id: string
+		file_role: string
+		derived_fields: Record<string, string>
+	}
+
+	interface DerivedDatasetAssetSummary {
+		assets: DerivedDatasetAsset[]
+		suggested_columns: string[]
+	}
+
+	interface DatasetProcessingAction {
+		key: string
+		label: string
+		description: string
+	}
+
+interface DatasetProcessingSummary {
+	participant_count: number
+	primary_asset_count: number
+	reference_count: number
+	index_count: number
+	warnings: string[]
+	suggested_actions: DatasetProcessingAction[]
+}
+
+interface ParticipantRecord {
+	id: number
+	participant_id: string
+	file_count: number
+	created_at: string
+}
+
+interface ReferenceDownloadResult {
+	reference_dir: string
+}
+
 	const PENDING_DATASET_IMPORT_KEY = 'biovault.pendingDatasetImportPaths'
+	const RESERVED_ASSET_EXTRA_KEYS = new Set(['file_type', 'participant_id', 'file_role'])
+	const INTERNAL_ASSET_METADATA_KEYS = new Set([
+		'__asset_structure',
+		'__asset_group',
+		'__entry_id',
+		'entry_name',
+	])
+	const DISALLOWED_UI_COLUMNS = new Set(['kind', 'type', 'twin'])
 
 	let datasetName = $derived($page.params.name ?? '')
 	let isNewDataset = $derived(datasetName === 'new')
@@ -150,21 +191,23 @@
 		currentName !== originalName || description !== originalDescription || version !== originalVersion,
 	)
 
-	let allAssetsHaveMocks = $derived(assets.length > 0 && assets.every((a) => a.mockPath))
-	let missingMockCount = $derived(assets.filter((a) => !a.mockPath).length)
+	let allAssetsHaveMocks = $derived(assets.length > 0 && assets.every((a) => a.mockPath || a.mockUrl))
+	let missingMockCount = $derived(assets.filter((a) => !a.mockPath && !a.mockUrl).length)
 
-	let stagedRows = $state<StagedImportRow[]>([])
-	let stagedSelection = $state<RowSelectionState>({})
-	let stagingSearch = $state('')
 	let customColumnDraft = $state('')
 	let customColumns = $state<string[]>([])
 	let enabledColumns = $state<string[]>([])
 	let addColumnMenuOpen = $state(false)
 	let processingColumns = $state<string[]>([])
-	let stagingBusy = $state(false)
-	let postProcessEnabled = $state(true)
-	let applySuggestedColumns = $state(true)
-	let stageFolderPath = $state<string | null>(null)
+	let suggestedColumns = $state<string[]>([])
+let processingSummary = $state<DatasetProcessingSummary | null>(null)
+let processingSummaryBusy = $state(false)
+let referenceImporting = $state(false)
+let knownParticipants = $state<ParticipantRecord[]>([])
+let participantFilter = $state('all')
+let mockUrlDialogOpen = $state(false)
+	let pendingMockUrlAssetId = $state<string | null>(null)
+	let mockUrlDraft = $state('')
 
 	// Table state
 	let pagination = $state<PaginationState>({ pageIndex: 0, pageSize: 20 })
@@ -183,29 +226,45 @@
 	let someExtensionsSelected = $derived(
 		selectedExtensions.size > 0 && selectedExtensions.size < fileTypeOptions.length,
 	)
-	let sortedFileTypes = $derived(
-		[...fileTypeOptions].sort((a, b) => a.extension.localeCompare(b.extension)),
+let sortedFileTypes = $derived(
+	[...fileTypeOptions].sort((a, b) => a.extension.localeCompare(b.extension)),
+)
+let participantOptions = $derived.by(() => {
+	const ids = new Set(
+		[
+			...knownParticipants.map((participant) => participant.participant_id),
+			...assets.map((asset) => asset.participantId),
+		]
+			.map((value) => value.trim())
+			.filter(Boolean),
+	)
+	return Array.from(ids).sort((a, b) => a.localeCompare(b))
+})
+let referenceAssets = $derived(
+	assets.filter(
+		(asset) => asset.fileRole.toLowerCase() === 'reference' || asset.fileType === 'Reference',
+	),
+)
+let visibleAssets = $derived(
+	participantFilter === 'all'
+		? assets
+		: assets.filter((asset) => asset.participantId.trim() === participantFilter),
+)
+	let processingSummarySignature = $derived(
+		JSON.stringify(
+			assets.map((asset) => ({
+				name: asset.name,
+				path: asset.path,
+				mockPath: asset.mockPath || '',
+				mockUrl: asset.mockUrl || '',
+				fileType: asset.fileType,
+				participantId: asset.participantId,
+				fileRole: asset.fileRole,
+				metadata: asset.metadata,
+			})),
+		),
 	)
 
-	const detectedTypeByExtension: Record<string, string> = {
-		vcf: 'Variants',
-		'vcf.gz': 'Variants',
-		bcf: 'Variants',
-		bam: 'Aligned Reads',
-		cram: 'Aligned Reads',
-		fastq: 'Reads',
-		'fastq.gz': 'Reads',
-		fq: 'Reads',
-		'fq.gz': 'Reads',
-		csv: 'Table',
-		tsv: 'Table',
-		txt: 'Text',
-		json: 'Metadata',
-		yaml: 'Metadata',
-		yml: 'Metadata',
-		'fa': 'Reference',
-		fasta: 'Reference',
-	}
 	const derivedColumnDefinitions: Record<string, DerivedColumnDefinition> = {
 		participant_id: {
 			key: 'participant_id',
@@ -272,195 +331,257 @@
 			.replace(/^_+|_+$/g, '')
 	}
 
-	function inferParticipantId(filename: string): string {
-		const base = filename.replace(/\.[^.]+(\.[^.]+)?$/, '')
-		const token = base.match(/^([A-Za-z0-9_-]+)/)?.[1] || base
-		return token.replace(/[_-]+(R[12]|L\d{3}|S\d+)$/i, '')
+	function toRecord(value: unknown): Record<string, unknown> {
+		return value && typeof value === 'object' && !Array.isArray(value)
+			? (value as Record<string, unknown>)
+			: {}
 	}
 
-	function inferRefVersion(value: string): string {
-		const lower = value.toLowerCase()
-		if (lower.includes('grch38') || lower.includes('hg38')) return 'hg38'
-		if (lower.includes('grch37') || lower.includes('hg19')) return 'hg19'
-		if (lower.includes('chm13') || lower.includes('t2t')) return 't2t'
-		return ''
+	function toStringOrEmpty(value: unknown): string {
+		return typeof value === 'string' ? value : ''
 	}
 
-	function inferLane(value: string): string {
-		return value.match(/(?:^|[_-])(L\d{3})(?:[_-]|$)/i)?.[1]?.toUpperCase() ?? ''
+	function toNonEmptyStringOrUndefined(value: unknown): string | undefined {
+		return typeof value === 'string' && value.trim() ? value : undefined
 	}
 
-	function inferReadPair(value: string): string {
-		const match =
-			value.match(/(?:^|[_-])(R[12])(?:[_-]|$)/i) ??
-			value.match(/(?:^|[_-])([12])(?:[_-]|$)/)
-		if (!match) return ''
-		return match[1].toUpperCase().startsWith('R') ? match[1].toUpperCase() : `R${match[1]}`
-	}
-
-	function normalizePathCandidate(path: string): string {
-		return path.toLowerCase()
-	}
-
-	function getFileStem(path: string): string {
-		const filename = getFileName(path).toLowerCase()
-		if (filename.endsWith('.vcf.gz')) return filename.slice(0, -7)
-		if (filename.endsWith('.fastq.gz')) return filename.slice(0, -9)
-		if (filename.endsWith('.fq.gz')) return filename.slice(0, -6)
-		const idx = filename.lastIndexOf('.')
-		return idx >= 0 ? filename.slice(0, idx) : filename
-	}
-
-	function findAssetByCandidates(candidates: string[], allAssets: Asset[]): Asset | null {
-		const normalized = new Set(candidates.map(normalizePathCandidate))
-		return (
-			allAssets.find((candidate) => candidate.path && normalized.has(normalizePathCandidate(candidate.path))) ??
-			null
+	function sanitizeUiColumns(columns: string[]): string[] {
+		return Array.from(
+			new Set(
+				columns.filter((column) => {
+					const normalized = normalizeAssetName(column)
+					return normalized && !DISALLOWED_UI_COLUMNS.has(normalized)
+				}),
+			),
 		)
-	}
-
-	function findAlignedIndexPath(asset: Asset, allAssets: Asset[]): string {
-		const extension = getExtension(asset.path)
-		const lowerPath = asset.path.toLowerCase()
-		const candidates =
-			extension === 'bam'
-				? [asset.path + '.bai', `${lowerPath.replace(/\.bam$/i, '')}.bai`]
-				: extension === 'cram'
-					? [asset.path + '.crai', `${lowerPath.replace(/\.cram$/i, '')}.crai`]
-					: []
-		return findAssetByCandidates(candidates, allAssets)?.path ?? ''
-	}
-
-	function findVariantIndexPath(asset: Asset, allAssets: Asset[]): string {
-		const extension = getExtension(asset.path)
-		const candidates =
-			extension === 'bcf'
-				? [asset.path + '.csi']
-				: [asset.path + '.tbi', asset.path + '.csi']
-		return findAssetByCandidates(candidates, allAssets)?.path ?? ''
-	}
-
-	function findReferenceAsset(asset: Asset, allAssets: Asset[]): Asset | null {
-		const assetRef = inferRefVersion(asset.path)
-		const references = allAssets.filter((candidate) => candidate.fileType === 'Reference')
-		if (references.length === 0) return null
-		if (!assetRef) return references[0] ?? null
-		return (
-			references.find((candidate) => inferRefVersion(candidate.path) === assetRef) ?? references[0] ?? null
-		)
-	}
-
-	function findReferenceIndexPath(referencePath: string, allAssets: Asset[]): string {
-		if (!referencePath) return ''
-		const candidates = [referencePath + '.fai']
-		const referenceStem = getFileStem(referencePath)
-		if (referenceStem) candidates.push(`${referenceStem}.fai`)
-		return findAssetByCandidates(candidates, allAssets)?.path ?? ''
-	}
-
-	function deriveColumnValue(asset: Asset, column: string, allAssets: Asset[]): string {
-		const filename = getFileName(asset.path)
-		switch (column) {
-			case 'participant_id':
-				return asset.participantId || inferParticipantId(filename)
-			case 'file_role':
-				return asset.fileRole || inferFileRole(filename, getExtension(asset.path))
-			case 'read_pair':
-				return inferReadPair(filename)
-			case 'lane':
-				return inferLane(filename)
-			case 'ref_version':
-				return inferRefVersion(asset.path)
-			case 'aligned_index':
-				return findAlignedIndexPath(asset, allAssets)
-			case 'vcf_index':
-				return findVariantIndexPath(asset, allAssets)
-			case 'reference_file':
-				return findReferenceAsset(asset, allAssets)?.path ?? ''
-			case 'reference_index': {
-				const referencePath = findReferenceAsset(asset, allAssets)?.path ?? ''
-				return findReferenceIndexPath(referencePath, allAssets)
-			}
-			default:
-				return asset.metadata[column] ?? ''
-		}
-	}
-
-	function populateDerivedColumn(column: string) {
-		const snapshot = [...assets]
-		assets = snapshot.map((asset) => {
-			const value = deriveColumnValue(asset, column, snapshot)
-			if (column === 'participant_id') return { ...asset, participantId: value }
-			if (column === 'file_role') return { ...asset, fileRole: value }
-			return { ...asset, metadata: { ...asset.metadata, [column]: value } }
-		})
-	}
-
-	function inferFileRole(filename: string, extension: string): StagedImportRow['fileRole'] {
-		const lower = filename.toLowerCase()
-		if (['bai', 'crai', 'tbi', 'fai'].includes(extension)) return 'index'
-		if (['fa', 'fasta'].includes(extension) || lower.includes('reference')) return 'reference'
-		if (lower.includes('mock')) return 'mock'
-		if (!extension) return 'unknown'
-		return 'primary'
-	}
-
-	function inferDetectedType(filename: string, extension: string): {
-		type: string
-		confidence: StagedImportRow['confidence']
-		warnings: string[]
-	} {
-		const warnings: string[] = []
-		const byExt = detectedTypeByExtension[extension]
-		if (byExt) {
-			if (extension === 'txt') warnings.push('Generic text file; review type before commit')
-			return { type: byExt, confidence: extension === 'txt' ? 'low' : 'high', warnings }
-		}
-		if (filename.toLowerCase().includes('mock')) {
-			return { type: 'Mock Data', confidence: 'medium', warnings }
-		}
-		warnings.push('Unknown file type')
-		return { type: 'Unknown', confidence: 'low', warnings }
 	}
 
 	function createAssetFromPath(filePath: string, partial?: Partial<Asset>): Asset {
-		const filename = getFileName(filePath)
-		const extension = getExtension(filePath)
-		const participantId = inferParticipantId(filename)
-		const { type } = inferDetectedType(filename, extension)
-		const fileRole = inferFileRole(filename, extension)
 		return {
 			rowId: partial?.rowId ?? crypto.randomUUID(),
 			fileId: partial?.fileId ?? null,
 			name: partial?.name ?? getFileName(filePath).split('.')[0] ?? '',
 			path: filePath,
-			fileType: partial?.fileType ?? type,
-			participantId: partial?.participantId ?? participantId,
-			fileRole: partial?.fileRole ?? fileRole,
+			fileType: partial?.fileType?.trim() ? partial.fileType : '',
+			participantId: partial?.participantId?.trim() ? partial.participantId : '',
+			fileRole: partial?.fileRole?.trim() ? partial.fileRole : '',
 			metadata: partial?.metadata ?? {},
 			exists: partial?.exists ?? true,
 			mockPath: partial?.mockPath ?? '',
+			mockUrl: partial?.mockUrl ?? '',
 			mockExists: partial?.mockExists ?? false,
 		}
 	}
 
-	function buildStagedRow(path: string): StagedImportRow {
-		const filename = getFileName(path)
-		const extension = getExtension(path)
-		const participantId = inferParticipantId(filename)
-		const { type, confidence, warnings } = inferDetectedType(filename, extension)
-		return {
-			rowId: crypto.randomUUID(),
-			path,
-			filename,
-			extension: extension || '—',
-			detectedType: type,
-			confidence,
-			participantId,
-			assetName: normalizeAssetName(filename) || 'asset',
-			fileRole: inferFileRole(filename, extension),
-			warnings,
+	function createProcessingPayload(sourceAssets: Asset[]): Array<{
+		name: string
+		path: string
+		mock_path: string
+		mock_url: string
+		file_type: string
+		participant_id: string
+		file_role: string
+		metadata: Record<string, string>
+	}> {
+		return sourceAssets.map((asset) => ({
+			name: asset.name,
+			path: asset.path,
+			mock_path: asset.mockPath || '',
+			mock_url: asset.mockUrl || '',
+			file_type: asset.fileType,
+			participant_id: asset.participantId,
+			file_role: asset.fileRole,
+			metadata: asset.metadata,
+		}))
+	}
+
+	async function refreshProcessingSummary(sourceAssets: Asset[]) {
+		if (sourceAssets.length === 0) {
+			processingSummary = null
+			return
 		}
+		processingSummaryBusy = true
+		try {
+			processingSummary = await invoke<DatasetProcessingSummary>('summarize_dataset_processing', {
+				assets: createProcessingPayload(sourceAssets),
+			})
+		} catch {
+			processingSummary = null
+		} finally {
+			processingSummaryBusy = false
+		}
+	}
+
+	async function analyzeDatasetAssetSummary(
+		paths: string[],
+	): Promise<{ assetsByPath: Map<string, DerivedDatasetAsset>; suggestedColumns: string[] }> {
+		const uniquePaths = [...new Set(paths.map((path) => path.trim()).filter(Boolean))]
+		if (uniquePaths.length === 0) return { assetsByPath: new Map(), suggestedColumns: [] }
+		const summary = await invoke<DerivedDatasetAssetSummary>('analyze_dataset_assets_summary', {
+			paths: uniquePaths,
+		}).catch(() => ({ assets: [], suggested_columns: [] } as DerivedDatasetAssetSummary))
+		return {
+			assetsByPath: new Map(summary.assets.map((analysis) => [analysis.path, analysis])),
+			suggestedColumns: sanitizeUiColumns(summary.suggested_columns ?? []),
+		}
+	}
+
+	async function createAssetsFromPaths(paths: string[]): Promise<Asset[]> {
+		const uniquePaths = [...new Set(paths.map((path) => path.trim()).filter(Boolean))]
+		const summary = await analyzeDatasetAssetSummary(uniquePaths)
+		suggestedColumns = summary.suggestedColumns
+		return uniquePaths.map((filePath) => {
+			const analysis = summary.assetsByPath.get(filePath)
+			return createAssetFromPath(filePath, {
+				name: analysis?.asset_name || undefined,
+				fileType: analysis?.file_type,
+				participantId: analysis?.participant_id,
+				fileRole: analysis?.file_role,
+				metadata: analysis?.derived_fields ?? {},
+			})
+		})
+	}
+
+	function getPersistedAssetMetadata(extra: unknown): Record<string, string> {
+		const record = toRecord(extra)
+		return Object.fromEntries(
+			Object.entries(record)
+				.filter(
+					([key, value]) =>
+						!RESERVED_ASSET_EXTRA_KEYS.has(key) &&
+						!INTERNAL_ASSET_METADATA_KEYS.has(key) &&
+						typeof value === 'string',
+				)
+				.map(([key, value]) => [key, value as string]),
+		)
+	}
+
+	function getInternalAssetMetadata(extra: unknown): Record<string, string> {
+		const record = toRecord(extra)
+		return Object.fromEntries(
+			Object.entries(record)
+				.filter(([key, value]) => INTERNAL_ASSET_METADATA_KEYS.has(key) && typeof value === 'string')
+				.map(([key, value]) => [key, value as string]),
+		)
+	}
+
+	function parseStructuredEntries(raw?: string): Array<Record<string, unknown>> {
+		if (!raw) return []
+		try {
+			const parsed = JSON.parse(raw) as { entries?: unknown }
+			return Array.isArray(parsed?.entries)
+				? parsed.entries.filter(
+						(entry): entry is Record<string, unknown> =>
+							Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry),
+				  )
+				: []
+		} catch {
+			return []
+		}
+	}
+
+	function entryString(entry: Record<string, unknown>, key: string): string {
+		const value = entry[key]
+		return typeof value === 'string' ? value : ''
+	}
+
+	function buildAssetRowsFromTwinList(asset: DatasetAsset): Asset[] {
+		const privateEntries = parseStructuredEntries(asset.private_ref)
+		const mockEntries = parseStructuredEntries(asset.mock_ref)
+		const rowCount = Math.max(privateEntries.length, mockEntries.length)
+		const groupKey = asset.asset_key
+		const rows: Asset[] = []
+
+		for (let index = 0; index < rowCount; index += 1) {
+			const privateEntry = privateEntries[index] ?? {}
+			const mockEntry = mockEntries[index] ?? {}
+			const participantId =
+				entryString(privateEntry, 'participant_id') || entryString(mockEntry, 'participant_id')
+			const fileType =
+				entryString(privateEntry, 'file_type') ||
+				entryString(mockEntry, 'file_type') ||
+				toStringOrEmpty(asset.extra?.file_type)
+			const fileRole =
+				entryString(privateEntry, 'file_role') ||
+				entryString(mockEntry, 'file_role') ||
+				toStringOrEmpty(asset.extra?.file_role)
+			const mockSourcePath = entryString(mockEntry, 'source_path')
+			const mockUrl = entryString(mockEntry, 'url')
+			const metadata: Record<string, string> = {
+				__asset_structure: 'twin_list',
+				__asset_group: groupKey,
+			}
+
+			for (const [key, value] of Object.entries(privateEntry)) {
+				if (
+					typeof value === 'string' &&
+					!['id', 'file_path', 'participant_id', 'file_type', 'file_role', 'entry_name'].includes(key)
+				) {
+					metadata[key] = value
+				}
+			}
+			for (const [key, value] of Object.entries(mockEntry)) {
+				if (
+					typeof value === 'string' &&
+					!['id', 'url', 'source_path', 'participant_id', 'file_type', 'file_role', 'entry_name'].includes(key) &&
+					!(key in metadata)
+				) {
+					metadata[key] = value
+				}
+			}
+
+			const filePath = entryString(privateEntry, 'file_path')
+			const rowName =
+				entryString(privateEntry, 'entry_name') ||
+				entryString(mockEntry, 'entry_name') ||
+				`${asset.asset_key}_${index + 1}`
+			rows.push(
+				createAssetFromPath(filePath, {
+					rowId: crypto.randomUUID(),
+					fileId: asset.private_file_id ?? null,
+					name: rowName,
+					fileType,
+					participantId,
+					fileRole,
+					metadata,
+					exists: true,
+					mockPath: mockSourcePath,
+					mockUrl:
+						mockUrl && (mockUrl.startsWith('http://') || mockUrl.startsWith('https://') || mockUrl.startsWith('syft://'))
+							? mockUrl
+							: '',
+					mockExists: true,
+				}),
+			)
+		}
+
+		return rows
+	}
+
+	function getDatasetUiExtra(extra: unknown): DatasetUiExtra {
+		const record = toRecord(extra)
+		const enabledColumns = Array.isArray(record.enabled_columns)
+			? record.enabled_columns.filter((value): value is string => typeof value === 'string')
+			: []
+		const customColumns = Array.isArray(record.custom_columns)
+			? record.custom_columns.filter((value): value is string => typeof value === 'string')
+			: []
+		return {
+			enabled_columns: sanitizeUiColumns(enabledColumns),
+			custom_columns: sanitizeUiColumns(customColumns),
+		}
+	}
+
+	function inferColumnsFromAssets(assetRows: Asset[]): string[] {
+		const derived = new Set<string>()
+		for (const asset of assetRows) {
+			if (asset.participantId) derived.add('participant_id')
+			if (asset.fileRole) derived.add('file_role')
+			for (const [key, value] of Object.entries(asset.metadata)) {
+				if (typeof value === 'string' && value.trim()) derived.add(key)
+			}
+		}
+		return Array.from(derived)
 	}
 
 	function pathBasename(path: string): string {
@@ -473,48 +594,9 @@
 		return normalizeAssetName(pathBasename(firstPath)) || 'dataset'
 	}
 
-	const filteredStagedRows = $derived.by(() => {
-		const q = stagingSearch.trim().toLowerCase()
-		if (!q) return stagedRows
-		return stagedRows.filter((row) =>
-			[
-				row.filename,
-				row.path,
-				row.detectedType,
-				row.participantId,
-				row.assetName,
-				row.fileRole,
-			].some((value) => value.toLowerCase().includes(q)),
-		)
-	})
-
-	const selectedStagedIds = $derived(
-		Object.keys(stagedSelection).filter((id) => stagedSelection[id]),
+	const availableColumnSuggestions = $derived.by(() =>
+		suggestedColumns.filter((column) => !enabledColumns.includes(column)),
 	)
-	const selectedStagedRows = $derived(
-		stagedRows.filter((row) => selectedStagedIds.includes(row.rowId)),
-	)
-	const availableColumnSuggestions = $derived.by(() => {
-		const fileTypes = new Set(assets.map((asset) => asset.fileType))
-		const fileRoles = new Set(assets.map((asset) => asset.fileRole))
-		const suggestions = new Set<string>()
-		if (fileTypes.size > 0) suggestions.add('participant_id')
-		if (fileRoles.size > 1 || fileRoles.has('index') || fileRoles.has('reference')) {
-			suggestions.add('file_role')
-		}
-		if (Array.from(fileTypes).some((type) => type === 'Reads')) {
-			suggestions.add('read_pair')
-			suggestions.add('lane')
-		}
-		if (Array.from(fileTypes).some((type) => type === 'Variants' || type === 'Aligned Reads')) {
-			suggestions.add('ref_version')
-			suggestions.add('reference_file')
-		}
-		if (Array.from(fileTypes).some((type) => type === 'Aligned Reads')) suggestions.add('aligned_index')
-		if (Array.from(fileTypes).some((type) => type === 'Variants')) suggestions.add('vcf_index')
-		if (Array.from(fileTypes).some((type) => type === 'Reference')) suggestions.add('reference_index')
-		return Array.from(suggestions).filter((column) => !enabledColumns.includes(column))
-	})
 	function updateAsset(assetId: string, patch: Partial<Asset>) {
 		assets = assets.map((asset) => (asset.rowId === assetId ? { ...asset, ...patch } : asset))
 	}
@@ -537,7 +619,25 @@
 		enabledColumns = [...enabledColumns, normalized]
 		processingColumns = [...processingColumns, normalized]
 		await tick()
-		populateDerivedColumn(normalized)
+		const summary = await analyzeDatasetAssetSummary(assets.map((asset) => asset.path))
+		suggestedColumns = summary.suggestedColumns
+		assets = assets.map((asset) => {
+			const analysis = summary.assetsByPath.get(asset.path)
+			if (!analysis) return asset
+			if (normalized === 'participant_id') {
+				return { ...asset, participantId: analysis.participant_id || asset.participantId }
+			}
+			if (normalized === 'file_role') {
+				return { ...asset, fileRole: analysis.file_role || asset.fileRole }
+			}
+			return {
+				...asset,
+				metadata: {
+					...asset.metadata,
+					[normalized]: analysis.derived_fields[normalized] ?? asset.metadata[normalized] ?? '',
+				},
+			}
+		})
 		processingColumns = processingColumns.filter((value) => value !== normalized)
 		customColumnDraft = ''
 		addColumnMenuOpen = false
@@ -682,16 +782,18 @@
 			cell: ({ row }) => {
 				const { mockPath, mockExists, rowId } = row.original
 				if (!mockPath) {
-					return renderComponent(AssetMockButton, {
-						assetId: rowId,
-						hasMock: false,
-						onSet: setMockData,
-						onRemove: removeMockData,
-					})
-				}
+				return renderComponent(AssetMockButton, {
+					assetId: rowId,
+					hasMock: false,
+					onSet: setMockData,
+					onSetUrl: openMockUrlDialog,
+					onRemove: removeMockData,
+				})
+			}
 				return renderComponent(AssetMockCell, {
-					filename: getFileName(mockPath),
-					exists: mockExists,
+					filename: row.original.mockUrl || getFileName(mockPath),
+					exists: row.original.mockUrl ? true : mockExists,
+					isUrl: Boolean(row.original.mockUrl),
 				})
 			},
 		},
@@ -705,6 +807,7 @@
 					assetId: rowId,
 					hasMock: true,
 					onSet: setMockData,
+					onSetUrl: openMockUrlDialog,
 					onRemove: removeMockData,
 				})
 			},
@@ -734,7 +837,7 @@
 
 	const table = createSvelteTable({
 		get data() {
-			return assets
+			return visibleAssets
 		},
 		get columns() {
 			return tableColumns
@@ -790,6 +893,13 @@
 
 	onMount(async () => {
 		await loadDataset()
+		await loadParticipants()
+	})
+
+	$effect(() => {
+		processingSummarySignature
+		if (loading) return
+		void refreshProcessingSummary(assets)
 	})
 
 	function consumePendingImportPaths(): string[] {
@@ -805,16 +915,43 @@
 	}
 
 	async function buildAssets(datasetAssets: DatasetAsset[]) {
-		const loadedAssets = datasetAssets.map((a) =>
-			createAssetFromPath(a.resolved_private_path || a.private_path || '', {
+		const sourcePaths = datasetAssets
+			.map((asset) => asset.resolved_private_path || asset.private_path || '')
+			.filter(Boolean)
+		const summary = await analyzeDatasetAssetSummary(sourcePaths)
+		suggestedColumns = summary.suggestedColumns
+		const loadedAssets = datasetAssets.flatMap((a) => {
+			if (a.kind === 'twin_list') {
+				return buildAssetRowsFromTwinList(a)
+			}
+			const assetPath = a.resolved_private_path || a.private_path || ''
+			const analysis = summary.assetsByPath.get(assetPath)
+			const metadata = {
+				...(analysis?.derived_fields ?? {}),
+				...getInternalAssetMetadata(a.extra),
+				...getPersistedAssetMetadata(a.extra),
+			}
+			return [createAssetFromPath(assetPath, {
 				rowId: crypto.randomUUID(),
 				fileId: a.private_file_id ?? null,
 				name: a.asset_key,
+				fileType: toNonEmptyStringOrUndefined(a.extra?.file_type) ?? analysis?.file_type,
+				participantId:
+					toNonEmptyStringOrUndefined(a.extra?.participant_id) ?? analysis?.participant_id,
+				fileRole: toNonEmptyStringOrUndefined(a.extra?.file_role) ?? analysis?.file_role,
+				metadata,
 				exists: true,
 				mockPath: a.resolved_mock_path || a.mock_path || '',
+				mockUrl:
+					toNonEmptyStringOrUndefined(a.extra?.mock_url) ??
+					(a.mock_ref?.startsWith('http://') ||
+					a.mock_ref?.startsWith('https://') ||
+					a.mock_ref?.startsWith('syft://')
+						? a.mock_ref
+						: ''),
 				mockExists: true,
-			}),
-		)
+			})]
+		})
 
 		// Check which files exist
 		const pathsToCheck: string[] = []
@@ -849,25 +986,24 @@
 
 		try {
 			if (isNewDataset) {
-				currentName = ''
-				description = ''
-				version = '1.0.0'
-				assets = []
+			currentName = ''
+			description = ''
+			version = '1.0.0'
+			assets = []
 				originalName = ''
 				originalDescription = ''
-				originalVersion = '1.0.0'
-				isNetwork = false
-				isPublished = false
-				author = ''
-				rowSelection = {}
-				stagedRows = []
-				stagedSelection = {}
+			originalVersion = '1.0.0'
+			isNetwork = false
+			isPublished = false
+			author = ''
+			rowSelection = {}
 
-				const pendingPaths = consumePendingImportPaths()
-				if (pendingPaths.length > 0) {
-					await stageImportedPaths(pendingPaths)
-					currentName = guessDatasetName(pendingPaths)
-				}
+			const pendingPaths = consumePendingImportPaths()
+			if (pendingPaths.length > 0) {
+				await importPendingPaths(pendingPaths)
+				currentName = guessDatasetName(pendingPaths)
+			}
+			await refreshProcessingSummary(assets)
 				return
 			}
 
@@ -886,6 +1022,12 @@
 			version = dataset.version || '1.0.0'
 
 			assets = await buildAssets(datasetAssets)
+			const uiExtra = getDatasetUiExtra(dataset.extra)
+			customColumns = uiExtra.custom_columns ?? []
+			enabledColumns =
+				uiExtra.enabled_columns && uiExtra.enabled_columns.length > 0
+					? uiExtra.enabled_columns
+					: inferColumnsFromAssets(assets)
 
 			originalName = currentName
 			originalDescription = description
@@ -895,10 +1037,19 @@
 			author = dataset.author || ''
 
 			await checkPublishStatus()
+			await refreshProcessingSummary(assets)
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e)
 		} finally {
 			loading = false
+		}
+	}
+
+	async function loadParticipants() {
+		try {
+			knownParticipants = await invoke<ParticipantRecord[]>('get_participants')
+		} catch {
+			knownParticipants = []
 		}
 	}
 
@@ -918,7 +1069,14 @@
 			}
 
 			assets = await buildAssets(datasetWithAssets.assets)
+			const uiExtra = getDatasetUiExtra(datasetWithAssets.dataset.extra)
+			customColumns = uiExtra.custom_columns ?? []
+			enabledColumns =
+				uiExtra.enabled_columns && uiExtra.enabled_columns.length > 0
+					? uiExtra.enabled_columns
+					: inferColumnsFromAssets(assets)
 			rowSelection = {}
+			await refreshProcessingSummary(assets)
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e)
 		}
@@ -926,42 +1084,25 @@
 
 	// Helper to save the full dataset (used for asset changes)
 	async function saveDataset() {
-		const manifestAssets: Record<
-			string,
-			{
-				id?: string
-				kind?: string
-				url?: string
-				mappings?: {
-					private?: { file_path?: string; db_file_id?: number }
-					mock?: { file_path?: string; db_file_id?: number }
-				}
-			}
-		> = {}
-
-		for (const asset of assets.filter((a) => a.name && (a.path || a.mockPath))) {
-			manifestAssets[asset.name] = {
-				kind: 'twin',
-				mappings: {
-					private: asset.path ? { file_path: asset.path } : undefined,
-					mock: asset.mockPath ? { file_path: asset.mockPath } : undefined,
-				},
-			}
-		}
-
-		await invoke('save_dataset_with_files', {
-			manifest: {
+		await invoke('save_dataset_from_ui', {
+			request: {
 				name: currentName.trim(),
 				description: description.trim() || null,
 				version: version.trim() || '1.0.0',
-				schema: 'net.biovault.datasets:1.0.0',
-				author: null,
-				public_url: null,
-				private_url: null,
-				http_relay_servers: [],
-				assets: manifestAssets,
+				enabled_columns: enabledColumns,
+				custom_columns: customColumns,
+				assets: assets.map((asset) => ({
+					name: asset.name,
+					path: asset.path,
+					mock_path: asset.mockPath || '',
+					mock_url: asset.mockUrl || '',
+					file_type: asset.fileType,
+					participant_id: asset.participantId,
+					file_role: asset.fileRole,
+					metadata: asset.metadata,
+				})),
+				original_name: originalName || null,
 			},
-			originalName: originalName || null,
 		})
 	}
 
@@ -1043,36 +1184,6 @@
 		}
 	}
 
-	function mergeStagedRows(rows: StagedImportRow[]) {
-		const existingPaths = new Set(stagedRows.map((row) => row.path))
-		const nextRows = rows.filter((row) => !existingPaths.has(row.path))
-		if (nextRows.length === 0) {
-			toast.info('No new files detected')
-			return
-		}
-		stagedRows = [...nextRows, ...stagedRows]
-		toast.success(`Detected ${nextRows.length} file${nextRows.length === 1 ? '' : 's'}`)
-	}
-
-	function selectAllFilteredStagedRows(checked: boolean) {
-		if (checked) {
-			stagedSelection = Object.fromEntries(filteredStagedRows.map((row) => [row.rowId, true]))
-		} else {
-			stagedSelection = {}
-		}
-	}
-
-	function updateStagedRow(rowId: string, patch: Partial<StagedImportRow>) {
-		stagedRows = stagedRows.map((row) => (row.rowId === rowId ? { ...row, ...patch } : row))
-	}
-
-	function removeStagedRow(rowId: string) {
-		stagedRows = stagedRows.filter((row) => row.rowId !== rowId)
-		const nextSelection = { ...stagedSelection }
-		delete nextSelection[rowId]
-		stagedSelection = nextSelection
-	}
-
 	function addCustomColumn() {
 		const normalized = normalizeAssetName(customColumnDraft)
 		if (!normalized) return
@@ -1086,143 +1197,166 @@
 		customColumnDraft = ''
 	}
 
-	async function stageFilePaths(paths: string[]) {
-		if (paths.length === 0) return
-		stagingBusy = true
-		try {
-			mergeStagedRows(paths.map((path) => buildStagedRow(path)))
-		} finally {
-			stagingBusy = false
-		}
+	function selectedAssetIds(): string[] {
+		return Object.keys(rowSelection).filter((id) => rowSelection[id])
 	}
 
-	async function stageImportedPaths(paths: string[]) {
-		if (paths.length === 0) return
-
-		stagingBusy = true
-		try {
-			const normalized = [...new Set(paths.map((path) => path.trim()).filter(Boolean))]
-			const directoryFlags = await Promise.all(
-				normalized.map((path) =>
-					invoke<boolean>('is_directory', { path }).catch(() => false),
-				),
-			)
-
-			const directFiles = normalized.filter((_path, index) => !directoryFlags[index])
-			const folders = normalized.filter((_path, index) => directoryFlags[index])
-			const discoveredFiles: string[] = [...directFiles]
-
-			for (const folderPath of folders) {
-				const extensionCounts = await invoke<ExtensionCount[]>('get_extensions', {
-					path: folderPath,
-				})
-				const extensions = extensionCounts
-					.map((item) => item.extension?.trim())
-					.filter((extension): extension is string => Boolean(extension))
-
-				if (extensions.length === 0) continue
-
-				const folderFiles = await invoke<string[]>('search_txt_files', {
-					path: folderPath,
-					extensions,
-				})
-				discoveredFiles.push(...folderFiles)
-			}
-
-			const uniqueFiles = [...new Set(discoveredFiles)]
-			if (uniqueFiles.length === 0) {
-				toast.error('No importable files found in the selected files or folders')
-				return
-			}
-
-			await addAssetsWithDuplicateCheck(uniqueFiles.map((path) => createAssetFromPath(path)))
-		} finally {
-			stagingBusy = false
-		}
-	}
-
-	async function stageFiles() {
-		try {
-			const { open: openDialog } = await import('@tauri-apps/plugin-dialog')
-			const selected = await openDialog({
-				multiple: true,
-				directory: false,
-				title: 'Add Files to Import Queue',
-			})
-			if (selected && Array.isArray(selected)) {
-				await stageFilePaths(selected)
-			}
-		} catch (e) {
-			console.error('Failed to open file dialog:', e)
-			error = e instanceof Error ? e.message : String(e)
-		}
-	}
-
-	async function stageFolder() {
-		try {
-			const { open: openDialog } = await import('@tauri-apps/plugin-dialog')
-			const selectedDir = await openDialog({
-				multiple: false,
-				directory: true,
-				title: 'Scan Folder for Dataset Files',
-			})
-			if (selectedDir && typeof selectedDir === 'string') {
-				const extensionCounts = await invoke<ExtensionCount[]>('get_extensions', {
-					path: selectedDir,
-				})
-				const normalized = extensionCounts.filter((ext) => ext.extension?.trim())
-				if (normalized.length === 0) {
-					toast.error('No file types found in folder')
-					return
-				}
-				stageFolderPath = selectedDir
-				pendingFolderPath = selectedDir
-				fileTypeOptions = normalized
-				selectedExtensions = new Set(normalized.map((ext) => ext.extension))
-				fileTypeDialogOpen = true
-			}
-		} catch (e) {
-			console.error('Failed to open folder dialog:', e)
-			error = e instanceof Error ? e.message : String(e)
-		}
-	}
-
-	async function commitStagedRows() {
-		if (selectedStagedRows.length === 0) {
-			toast.info('Select at least one detected row to commit')
+	async function groupSelectedAsList() {
+		const selectedIds = selectedAssetIds()
+		if (selectedIds.length < 2) {
+			toast.info('Select at least two assets to group')
 			return
 		}
 
-		const newAssets: Asset[] = selectedStagedRows.map((row) =>
-			createAssetFromPath(row.path, {
-				rowId: crypto.randomUUID(),
-				fileId: null,
-				name: normalizeAssetName(row.assetName) || normalizeAssetName(row.filename) || 'asset',
-				fileType: row.detectedType,
-				participantId: row.participantId,
-				fileRole: row.fileRole,
-				metadata: {},
-				exists: true,
-				mockPath: row.fileRole === 'mock' ? row.path : '',
-				mockExists: row.fileRole === 'mock',
-			}),
+		const selectedAssets = assets.filter((asset) => selectedIds.includes(asset.rowId))
+		const participantIds = Array.from(
+			new Set(selectedAssets.map((asset) => asset.participantId.trim()).filter(Boolean)),
+		)
+		const baseLabel =
+			participantIds.length === 1
+				? participantIds[0]
+				: `${currentName || 'dataset'}_list_${Date.now().toString().slice(-5)}`
+		const groupKey = normalizeAssetName(baseLabel) || `list_${Date.now()}`
+
+		assets = assets.map((asset) =>
+			selectedIds.includes(asset.rowId)
+				? {
+						...asset,
+						metadata: {
+							...asset.metadata,
+							__asset_structure: 'twin_list',
+							__asset_group: groupKey,
+						},
+				  }
+				: asset,
 		)
 
-		await addAssetsWithDuplicateCheck(newAssets)
+		savingAssets = true
+		try {
+			await saveDataset()
+			await reloadAssets()
+			toast.success(`Grouped ${selectedIds.length} assets as a list`)
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e)
+		} finally {
+			savingAssets = false
+		}
+	}
 
-		if (postProcessEnabled) {
-			const indexCount = selectedStagedRows.filter((row) => row.fileRole === 'index').length
-			const unknownCount = selectedStagedRows.filter((row) => row.detectedType === 'Unknown').length
-			if (indexCount > 0 || unknownCount > 0) {
-				toast.info(
-					`Post-processing review: ${indexCount} index file${indexCount === 1 ? '' : 's'}, ${unknownCount} unknown row${unknownCount === 1 ? '' : 's'}.`,
-				)
-			}
+	async function ungroupSelectedListAssets() {
+		const selectedIds = selectedAssetIds()
+		if (selectedIds.length === 0) return
+
+		assets = assets.map((asset) => {
+			if (!selectedIds.includes(asset.rowId)) return asset
+			const metadata = { ...asset.metadata }
+			delete metadata.__asset_structure
+			delete metadata.__asset_group
+			delete metadata.__entry_id
+			return { ...asset, metadata }
+		})
+
+		savingAssets = true
+		try {
+			await saveDataset()
+			await reloadAssets()
+			toast.success('Removed list grouping from selected assets')
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e)
+		} finally {
+			savingAssets = false
+		}
+	}
+
+	async function groupAssetsByParticipant() {
+		const participantAssets = assets.filter((asset) => asset.participantId.trim())
+		if (participantAssets.length < 2) {
+			toast.info('Need at least two participant-tagged assets to group')
+			return
 		}
 
-		const committedIds = new Set(selectedStagedRows.map((row) => row.rowId))
-		stagedRows = stagedRows.filter((row) => !committedIds.has(row.rowId))
-		stagedSelection = {}
+		assets = assets.map((asset) => {
+			const participantId = asset.participantId.trim()
+			if (!participantId) return asset
+			return {
+				...asset,
+				metadata: {
+					...asset.metadata,
+					__asset_structure: 'twin_list',
+					__asset_group: normalizeAssetName(participantId) || participantId,
+				},
+			}
+		})
+
+		savingAssets = true
+		try {
+			await saveDataset()
+			await reloadAssets()
+			toast.success('Grouped assets by participant')
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e)
+		} finally {
+			savingAssets = false
+		}
+	}
+
+	async function importPendingPaths(paths: string[]) {
+		if (paths.length === 0) return
+
+		const normalized = [...new Set(paths.map((path) => path.trim()).filter(Boolean))]
+		const directoryFlags = await Promise.all(
+			normalized.map((path) =>
+				invoke<boolean>('is_directory', { path }).catch(() => false),
+			),
+		)
+
+		const directFiles = normalized.filter((_path, index) => !directoryFlags[index])
+		const folders = normalized.filter((_path, index) => directoryFlags[index])
+		const discoveredFiles: string[] = [...directFiles]
+
+		for (const folderPath of folders) {
+			const extensionCounts = await invoke<ExtensionCount[]>('get_extensions', {
+				path: folderPath,
+			})
+			const extensions = extensionCounts
+				.map((item) => item.extension?.trim())
+				.filter((extension): extension is string => Boolean(extension))
+
+			if (extensions.length === 0) continue
+
+			const folderFiles = await invoke<string[]>('search_txt_files', {
+				path: folderPath,
+				extensions,
+			})
+			discoveredFiles.push(...folderFiles)
+		}
+
+		const uniqueFiles = [...new Set(discoveredFiles)]
+		if (uniqueFiles.length === 0) {
+			toast.error('No importable files found in the selected files or folders')
+			return
+		}
+
+		await addAssetsWithDuplicateCheck(await createAssetsFromPaths(uniqueFiles))
+	}
+
+	async function importReferenceBundle() {
+		referenceImporting = true
+		try {
+			const result = await invoke<ReferenceDownloadResult>('fetch_reference_data_with_progress')
+			const base = result.reference_dir
+			const newAssets = await createAssetsFromPaths([
+				`${base}/GRCh38_full_analysis_set_plus_decoy_hla.fa`,
+				`${base}/GRCh38_full_analysis_set_plus_decoy_hla.fa.fai`,
+			])
+			await addAssetsWithDuplicateCheck(newAssets)
+			toast.success('GRCh38 reference added to this dataset')
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e)
+			toast.error('Failed to import GRCh38 reference')
+		} finally {
+			referenceImporting = false
+		}
 	}
 
 	async function addFiles() {
@@ -1234,7 +1368,7 @@
 				title: 'Add Files',
 			})
 			if (selected && Array.isArray(selected)) {
-				const newAssets = selected.map((filePath) => createAssetFromPath(filePath))
+				const newAssets = await createAssetsFromPaths(selected)
 				await addAssetsWithDuplicateCheck(newAssets)
 			}
 		} catch (e) {
@@ -1295,7 +1429,6 @@
 	function closeFileTypeDialog() {
 		fileTypeDialogOpen = false
 		pendingFolderPath = null
-		stageFolderPath = null
 		fileTypeOptions = []
 		selectedExtensions = new Set()
 	}
@@ -1320,15 +1453,10 @@
 				return
 			}
 
-			const newAssets = files.map((filePath) => createAssetFromPath(filePath))
+			const newAssets = await createAssetsFromPaths(files)
 
-			const stageMode = stageFolderPath === pendingFolderPath
 			closeFileTypeDialog()
-			if (stageMode) {
-				await stageFilePaths(files)
-			} else {
-				await addAssetsWithDuplicateCheck(newAssets)
-			}
+			await addAssetsWithDuplicateCheck(newAssets)
 		} catch (e) {
 			console.error('Failed to load files for selected types:', e)
 			error = e instanceof Error ? e.message : String(e)
@@ -1440,7 +1568,7 @@
 			if (selected && typeof selected === 'string') {
 				assets = assets.map((a) => {
 					if (a.rowId === assetId) {
-						return { ...a, mockPath: selected, mockExists: true }
+						return { ...a, mockPath: selected, mockUrl: '', mockExists: true }
 					}
 					return a
 				})
@@ -1466,7 +1594,7 @@
 	async function removeMockData(assetId: string) {
 		assets = assets.map((a) => {
 			if (a.rowId === assetId) {
-				return { ...a, mockPath: '', mockExists: false }
+				return { ...a, mockPath: '', mockUrl: '', mockExists: false }
 			}
 			return a
 		})
@@ -1525,9 +1653,58 @@
 		return path.split('/').pop() || path
 	}
 
-	let validAssetCount = $derived(assets.filter((a) => a.name && (a.path || a.mockPath)).length)
-	let missingCount = $derived(assets.filter((a) => !a.exists || (a.mockPath && !a.mockExists)).length)
+	function openMockUrlDialog(assetId: string) {
+		const asset = assets.find((entry) => entry.rowId === assetId)
+		pendingMockUrlAssetId = assetId
+		mockUrlDraft = asset?.mockUrl || ''
+		mockUrlDialogOpen = true
+	}
+
+	async function saveMockUrl() {
+		if (!pendingMockUrlAssetId) return
+		const trimmed = mockUrlDraft.trim()
+		if (!trimmed) {
+			toast.error('Mock URL cannot be empty')
+			return
+		}
+
+		assets = assets.map((asset) =>
+			asset.rowId === pendingMockUrlAssetId
+				? { ...asset, mockUrl: trimmed, mockPath: '', mockExists: false }
+				: asset,
+		)
+		mockUrlDialogOpen = false
+		pendingMockUrlAssetId = null
+		mockUrlDraft = ''
+
+		savingAssets = true
+		try {
+			await saveDataset()
+			await reloadAssets()
+			toast.success('Mock URL added')
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e)
+		} finally {
+			savingAssets = false
+		}
+	}
+
+	function closeMockUrlDialog() {
+		mockUrlDialogOpen = false
+		pendingMockUrlAssetId = null
+		mockUrlDraft = ''
+	}
+
+	let validAssetCount = $derived(assets.filter((a) => a.name && (a.path || a.mockPath || a.mockUrl)).length)
+	let missingCount = $derived(
+		assets.filter((a) => !a.exists || (a.mockPath && !a.mockExists && !a.mockUrl)).length,
+	)
 	let selectedCount = $derived(Object.keys(rowSelection).filter((id) => rowSelection[id]).length)
+	let selectedGroupedCount = $derived(
+		assets.filter(
+			(asset) => rowSelection[asset.rowId] && asset.metadata.__asset_structure === 'twin_list',
+		).length,
+	)
 
 	let deleting = $state(false)
 	let deleteDialogOpen = $state(false)
@@ -1732,6 +1909,108 @@
 					</div>
 				{/if}
 
+				{#if processingSummary && (processingSummary.warnings.length > 0 || processingSummary.suggested_actions.length > 0)}
+					<div class="rounded-lg border px-4 py-3 text-sm">
+						<div class="flex flex-wrap items-start justify-between gap-3">
+							<div class="space-y-1">
+								<p class="font-medium">Processing</p>
+								<p class="text-muted-foreground">
+									{processingSummary.primary_asset_count} primary assets, {processingSummary.participant_count}
+									participant{processingSummary.participant_count === 1 ? '' : 's'}, {processingSummary.reference_count}
+									reference{processingSummary.reference_count === 1 ? '' : 's'}
+								</p>
+							</div>
+							{#if processingSummaryBusy}
+								<Badge variant="secondary" class="gap-1 px-2">
+									<Loader2Icon class="size-3 animate-spin" />
+									Updating...
+								</Badge>
+							{/if}
+						</div>
+						{#if processingSummary.warnings.length > 0}
+							<div class="mt-3 flex flex-wrap gap-2">
+								{#each processingSummary.warnings as warning (warning)}
+									<span class="text-muted-foreground">{warning}</span>
+								{/each}
+							</div>
+						{/if}
+						{#if processingSummary.suggested_actions.length > 0}
+							<div class="mt-3 flex flex-wrap gap-1.5">
+								{#each processingSummary.suggested_actions as action (action.key)}
+									<Button
+										variant="ghost"
+										size="sm"
+										class="h-8 px-2 text-muted-foreground hover:text-foreground"
+										title={action.description}
+										onclick={() => {
+											if (action.key === 'group_by_participant') {
+												groupAssetsByParticipant()
+												return
+											}
+											addSuggestedColumn(action.key)
+										}}
+									>
+										{action.label}
+									</Button>
+								{/each}
+							</div>
+						{/if}
+					</div>
+				{/if}
+
+				<div class="rounded-lg border px-4 py-3 text-sm">
+					<div class="flex flex-wrap items-center justify-between gap-3">
+						<div>
+							<p class="font-medium">Participants</p>
+							<p class="text-muted-foreground">
+								{participantOptions.length} known in this dataset view
+							</p>
+						</div>
+						<div class="flex items-center gap-2">
+							<label for="participant-filter" class="text-muted-foreground">Filter</label>
+							<select
+								id="participant-filter"
+								bind:value={participantFilter}
+								class="border-input bg-background rounded-md border px-2 py-1 text-sm"
+							>
+								<option value="all">All participants</option>
+								{#each participantOptions as option (option)}
+									<option value={option}>{option}</option>
+								{/each}
+							</select>
+						</div>
+					</div>
+				</div>
+
+				<div class="rounded-lg border px-4 py-3 text-sm">
+					<div class="flex flex-wrap items-center justify-between gap-3">
+						<div>
+							<p class="font-medium">References</p>
+							<p class="text-muted-foreground">
+								{referenceAssets.length} reference asset{referenceAssets.length === 1 ? '' : 's'} detected
+							</p>
+						</div>
+						<div class="flex flex-wrap items-center gap-2">
+							<Button variant="outline" size="sm" onclick={() => addSuggestedColumn('reference_file')}>
+								Attach References
+							</Button>
+							<Button
+								variant="ghost"
+								size="sm"
+								onclick={importReferenceBundle}
+								disabled={referenceImporting}
+							>
+								{#if referenceImporting}
+									<Loader2Icon class="size-4 animate-spin" />
+									Importing...
+								{:else}
+									Import GRCh38
+								{/if}
+							</Button>
+						</div>
+					</div>
+				</div>
+
 				<!-- Basic Information -->
 				<Card.Root>
 					<Card.Header>
@@ -1867,6 +2146,14 @@
 										/>
 									</div>
 									{#if selectedCount > 0}
+										<Button variant="outline" size="sm" onclick={groupSelectedAsList}>
+											Group as List
+										</Button>
+										{#if selectedGroupedCount > 0}
+											<Button variant="ghost" size="sm" onclick={ungroupSelectedListAssets}>
+												Ungroup
+											</Button>
+										{/if}
 										<Button variant="destructive" size="sm" onclick={confirmDeleteSelected}>
 											<TrashIcon class="size-4" />
 											Delete {selectedCount}
@@ -2152,6 +2439,36 @@
 			<Button variant="outline" onclick={closeFileTypeDialog}>Cancel</Button>
 			<Button onclick={confirmFileTypes} disabled={selectedExtensions.size === 0}>
 				Import selected
+			</Button>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root
+	bind:open={mockUrlDialogOpen}
+	onOpenChange={(open) => {
+		if (!open) closeMockUrlDialog()
+	}}
+>
+	<Dialog.Content class="max-w-md">
+		<Dialog.Header>
+			<Dialog.Title>Add Mock URL</Dialog.Title>
+			<Dialog.Description>
+				Use a public or Syft URL instead of a local mock file for this asset.
+			</Dialog.Description>
+		</Dialog.Header>
+		<div class="space-y-2">
+			<label for="mock-url" class="text-sm font-medium">Mock URL</label>
+			<Input
+				id="mock-url"
+				bind:value={mockUrlDraft}
+				placeholder="https://... or syft://..."
+			/>
+		</div>
+		<Dialog.Footer class="mt-4">
+			<Button variant="outline" onclick={closeMockUrlDialog}>Cancel</Button>
+			<Button onclick={saveMockUrl} disabled={!mockUrlDraft.trim()}>
+				Save URL
 			</Button>
 		</Dialog.Footer>
 	</Dialog.Content>

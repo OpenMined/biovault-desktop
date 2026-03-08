@@ -1,9 +1,11 @@
 use crate::types::AppState;
-use biovault::data::datasets::{build_manifest_from_db, get_dataset_with_assets};
+use biovault::data::datasets::{analyze_dataset_asset_paths, build_manifest_from_db, get_dataset_with_assets, summarize_dataset_asset_paths};
 use biovault::data::BioVaultDb;
+use biovault::cli::commands::datasets::infer_dataset_shape;
 use rusqlite::OptionalExtension;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_yaml;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -34,6 +36,398 @@ fn load_config_best_effort() -> biovault::config::Config {
 #[derive(Serialize, Clone, Debug)]
 pub struct DatasetSaveResult {
     pub dataset_id: i64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UiDatasetAssetInput {
+    pub name: String,
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub mock_path: String,
+    #[serde(default)]
+    pub mock_url: String,
+    #[serde(default)]
+    pub file_type: String,
+    #[serde(default)]
+    pub participant_id: String,
+    #[serde(default)]
+    pub file_role: String,
+    #[serde(default)]
+    pub metadata: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SaveDatasetFromUiRequest {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub enabled_columns: Vec<String>,
+    #[serde(default)]
+    pub custom_columns: Vec<String>,
+    #[serde(default)]
+    pub assets: Vec<UiDatasetAssetInput>,
+    #[serde(default)]
+    pub original_name: Option<String>,
+}
+
+fn is_url_like(value: &str) -> bool {
+    let trimmed = value.trim();
+    trimmed.starts_with("http://")
+        || trimmed.starts_with("https://")
+        || trimmed.starts_with("syft://")
+}
+
+fn non_empty_trimmed(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+fn ui_asset_metadata_value<'a>(asset: &'a UiDatasetAssetInput, key: &str) -> Option<&'a str> {
+    asset.metadata.get(key).map(|value| value.as_str()).filter(|value| !value.trim().is_empty())
+}
+
+fn ui_asset_group(asset: &UiDatasetAssetInput) -> Option<String> {
+    match (
+        ui_asset_metadata_value(asset, "__asset_structure"),
+        ui_asset_metadata_value(asset, "__asset_group"),
+    ) {
+        (Some("twin_list"), Some(group)) if !group.trim().is_empty() => Some(group.trim().to_string()),
+        _ => None,
+    }
+}
+
+fn validate_ui_dataset_assets(assets: &[UiDatasetAssetInput]) -> Result<(), String> {
+    let mut seen_names = BTreeSet::new();
+    let mut private_paths = BTreeSet::new();
+    let mut mock_paths = BTreeSet::new();
+
+    for asset in assets {
+        let name = asset.name.trim();
+        if name.is_empty() {
+            continue;
+        }
+
+        if ui_asset_group(asset).is_some() {
+            continue;
+        }
+
+        if !seen_names.insert(name.to_string()) {
+            return Err(format!("Duplicate asset name '{}' is not allowed", name));
+        }
+
+        if let Some(path) = non_empty_trimmed(&asset.path) {
+            private_paths.insert(path);
+        }
+
+        if let Some(path) = non_empty_trimmed(&asset.mock_path) {
+            mock_paths.insert(path);
+        }
+    }
+
+    let overlaps: Vec<String> = private_paths.intersection(&mock_paths).cloned().collect();
+    if !overlaps.is_empty() {
+        let preview = overlaps.into_iter().take(5).collect::<Vec<_>>().join(", ");
+        return Err(format!(
+            "The same file is being used as both private and mock data: {}",
+            preview
+        ));
+    }
+
+    Ok(())
+}
+
+fn build_twin_list_asset(
+    asset_key: String,
+    rows: Vec<UiDatasetAssetInput>,
+    dataset_name: &str,
+    email: &str,
+) -> biovault::cli::commands::datasets::DatasetAsset {
+    let mut group_extra = BTreeMap::new();
+    let mut private_entries = Vec::new();
+    let mut mock_entries = Vec::new();
+
+    for row in rows {
+        let mut entry_extra: BTreeMap<String, String> = row
+            .metadata
+            .into_iter()
+            .filter(|(key, _)| !key.starts_with("__"))
+            .collect();
+        let entry_name = row.name.trim().to_string();
+        if !entry_name.is_empty() {
+            entry_extra.insert("entry_name".to_string(), entry_name.clone());
+        }
+        if !row.file_type.trim().is_empty() {
+            entry_extra.insert("file_type".to_string(), row.file_type.trim().to_string());
+        }
+        if !row.file_role.trim().is_empty() {
+            entry_extra.insert("file_role".to_string(), row.file_role.trim().to_string());
+        }
+
+        if !row.path.trim().is_empty() {
+            let mut entry = serde_yaml::Mapping::new();
+            entry.insert(
+                serde_yaml::Value::String("id".to_string()),
+                serde_yaml::Value::String(Uuid::new_v4().to_string()),
+            );
+            entry.insert(
+                serde_yaml::Value::String("file_path".to_string()),
+                serde_yaml::Value::String(row.path.trim().to_string()),
+            );
+            if !row.participant_id.trim().is_empty() {
+                entry.insert(
+                    serde_yaml::Value::String("participant_id".to_string()),
+                    serde_yaml::Value::String(row.participant_id.trim().to_string()),
+                );
+            }
+            for (key, value) in &entry_extra {
+                entry.insert(
+                    serde_yaml::Value::String(key.clone()),
+                    serde_yaml::Value::String(value.clone()),
+                );
+            }
+            private_entries.push(serde_yaml::Value::Mapping(entry));
+        }
+
+        let mock_url = non_empty_trimmed(&row.mock_url);
+        let mock_path = non_empty_trimmed(&row.mock_path);
+        if let Some(url_or_path) = mock_url.clone().or(mock_path.clone()) {
+            let is_url = is_url_like(&url_or_path);
+            let resolved_url = if is_url {
+                url_or_path.clone()
+            } else {
+                let filename = Path::new(&url_or_path)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("mock.dat");
+                format!(
+                    "syft://{}/public/biovault/datasets/{}/assets/{}",
+                    email, dataset_name, filename
+                )
+            };
+
+            let mut entry = serde_yaml::Mapping::new();
+            entry.insert(
+                serde_yaml::Value::String("id".to_string()),
+                serde_yaml::Value::String(Uuid::new_v4().to_string()),
+            );
+            entry.insert(
+                serde_yaml::Value::String("url".to_string()),
+                serde_yaml::Value::String(resolved_url),
+            );
+            if !row.participant_id.trim().is_empty() {
+                entry.insert(
+                    serde_yaml::Value::String("participant_id".to_string()),
+                    serde_yaml::Value::String(row.participant_id.trim().to_string()),
+                );
+            }
+            if !is_url {
+                entry.insert(
+                    serde_yaml::Value::String("source_path".to_string()),
+                    serde_yaml::Value::String(url_or_path),
+                );
+            }
+            for (key, value) in &entry_extra {
+                entry.insert(
+                    serde_yaml::Value::String(key.clone()),
+                    serde_yaml::Value::String(value.clone()),
+                );
+            }
+            mock_entries.push(serde_yaml::Value::Mapping(entry));
+        }
+
+        if group_extra.is_empty() {
+            if !row.file_type.trim().is_empty() {
+                group_extra.insert(
+                    "file_type".to_string(),
+                    serde_yaml::Value::String(row.file_type.trim().to_string()),
+                );
+            }
+            group_extra.insert(
+                "__asset_structure".to_string(),
+                serde_yaml::Value::String("twin_list".to_string()),
+            );
+        }
+    }
+
+    let mock_csv_url = format!(
+        "syft://{}/public/biovault/datasets/{}/assets/{}.csv",
+        email, dataset_name, asset_key
+    );
+
+    let private_value = (!private_entries.is_empty()).then(|| {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::from_iter([
+            (
+                serde_yaml::Value::String("url".to_string()),
+                serde_yaml::Value::String(format!("{{root.private_url}}#assets.{}.private", asset_key)),
+            ),
+            (
+                serde_yaml::Value::String("type".to_string()),
+                serde_yaml::Value::String("twin_list".to_string()),
+            ),
+            (
+                serde_yaml::Value::String("entries".to_string()),
+                serde_yaml::Value::Sequence(private_entries.clone()),
+            ),
+        ]))
+    });
+
+    let mock_value = (!mock_entries.is_empty()).then(|| {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::from_iter([
+            (
+                serde_yaml::Value::String("url".to_string()),
+                serde_yaml::Value::String(mock_csv_url.clone()),
+            ),
+            (
+                serde_yaml::Value::String("type".to_string()),
+                serde_yaml::Value::String("twin_list".to_string()),
+            ),
+            (
+                serde_yaml::Value::String("entries".to_string()),
+                serde_yaml::Value::Sequence(mock_entries),
+            ),
+        ]))
+    });
+
+    biovault::cli::commands::datasets::DatasetAsset {
+        kind: Some("twin_list".to_string()),
+        url: Some(mock_csv_url),
+        private: private_value,
+        mock: mock_value,
+        mappings: Some(biovault::cli::commands::datasets::DatasetAssetMapping {
+            private: (!private_entries.is_empty()).then_some(
+                biovault::cli::commands::datasets::DatasetAssetMappingEndpoint {
+                    file_path: None,
+                    db_file_id: None,
+                    entries: Some(private_entries),
+                },
+            ),
+            mock: None,
+        }),
+        extra: group_extra,
+        ..Default::default()
+    }
+}
+
+fn infer_ui_dataset_shape(assets: &[UiDatasetAssetInput]) -> Option<String> {
+    let primary_assets: Vec<&UiDatasetAssetInput> = assets
+        .iter()
+        .filter(|asset| {
+            let role = asset.file_role.trim().to_ascii_lowercase();
+            role.is_empty() || role == "primary"
+        })
+        .filter(|asset| !asset.path.trim().is_empty())
+        .collect();
+
+    if primary_assets.is_empty() {
+        return None;
+    }
+
+    let all_have_participant = primary_assets
+        .iter()
+        .all(|asset| !asset.participant_id.trim().is_empty());
+    if !all_have_participant {
+        return None;
+    }
+
+    let aligned = primary_assets
+        .iter()
+        .all(|asset| asset.file_type.trim() == "Aligned Reads");
+    if aligned {
+        let has_aligned_index = primary_assets
+            .iter()
+            .any(|asset| ui_asset_metadata_value(asset, "aligned_index").is_some());
+        let has_reference = primary_assets
+            .iter()
+            .any(|asset| ui_asset_metadata_value(asset, "reference_file").is_some());
+        let has_reference_index = primary_assets
+            .iter()
+            .any(|asset| ui_asset_metadata_value(asset, "reference_index").is_some());
+        let has_ref_version = primary_assets
+            .iter()
+            .any(|asset| ui_asset_metadata_value(asset, "ref_version").is_some());
+
+        let mut fields = vec![
+            "participant_id: String".to_string(),
+            "aligned_file: File".to_string(),
+        ];
+        if has_aligned_index {
+            fields.push("aligned_index: File?".to_string());
+        }
+        if has_reference {
+            fields.push("reference_file: File?".to_string());
+        }
+        if has_reference_index {
+            fields.push("reference_index: File?".to_string());
+        }
+        if has_ref_version {
+            fields.push("ref_version: String?".to_string());
+        }
+        return Some(format!("List[Record{{{}}}]", fields.join(", ")));
+    }
+
+    let variants = primary_assets
+        .iter()
+        .all(|asset| asset.file_type.trim() == "Variants");
+    if variants {
+        let has_variant_index = primary_assets
+            .iter()
+            .any(|asset| ui_asset_metadata_value(asset, "vcf_index").is_some());
+        let has_reference = primary_assets
+            .iter()
+            .any(|asset| ui_asset_metadata_value(asset, "reference_file").is_some());
+        let has_reference_index = primary_assets
+            .iter()
+            .any(|asset| ui_asset_metadata_value(asset, "reference_index").is_some());
+        let has_ref_version = primary_assets
+            .iter()
+            .any(|asset| ui_asset_metadata_value(asset, "ref_version").is_some());
+
+        let mut fields = vec![
+            "participant_id: String".to_string(),
+            "vcf_file: File".to_string(),
+        ];
+        if has_variant_index {
+            fields.push("vcf_index: File?".to_string());
+        }
+        if has_reference {
+            fields.push("reference_file: File?".to_string());
+        }
+        if has_reference_index {
+            fields.push("reference_index: File?".to_string());
+        }
+        if has_ref_version {
+            fields.push("ref_version: String?".to_string());
+        }
+        return Some(format!("List[Record{{{}}}]", fields.join(", ")));
+    }
+
+    let reads = primary_assets.iter().all(|asset| asset.file_type.trim() == "Reads");
+    if reads {
+        let has_read_pair = primary_assets
+            .iter()
+            .any(|asset| ui_asset_metadata_value(asset, "read_pair").is_some());
+        let has_lane = primary_assets
+            .iter()
+            .any(|asset| ui_asset_metadata_value(asset, "lane").is_some());
+
+        let mut fields = vec![
+            "participant_id: String".to_string(),
+            "read_file: File".to_string(),
+        ];
+        if has_read_pair {
+            fields.push("read_pair: String?".to_string());
+        }
+        if has_lane {
+            fields.push("lane: String?".to_string());
+        }
+        return Some(format!("List[Record{{{}}}]", fields.join(", ")));
+    }
+
+    None
 }
 
 #[derive(Serialize)]
@@ -70,6 +464,40 @@ pub struct DatasetAsset {
     pub mock_path: Option<String>,
     pub resolved_private_path: Option<String>,
     pub resolved_mock_path: Option<String>,
+    pub extra: serde_json::Value,
+}
+
+#[derive(Serialize)]
+pub struct DerivedDatasetAsset {
+    pub path: String,
+    pub asset_name: String,
+    pub file_type: String,
+    pub participant_id: String,
+    pub file_role: String,
+    pub derived_fields: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Serialize)]
+pub struct DerivedDatasetAssetSummary {
+    pub assets: Vec<DerivedDatasetAsset>,
+    pub suggested_columns: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct DatasetProcessingAction {
+    pub key: String,
+    pub label: String,
+    pub description: String,
+}
+
+#[derive(Serialize)]
+pub struct DatasetProcessingSummary {
+    pub participant_count: usize,
+    pub primary_asset_count: usize,
+    pub reference_count: usize,
+    pub index_count: usize,
+    pub warnings: Vec<String>,
+    pub suggested_actions: Vec<DatasetProcessingAction>,
 }
 
 #[tauri::command]
@@ -118,6 +546,7 @@ pub fn list_datasets_with_assets(
                 mock_path: a.mock_path,
                 resolved_private_path,
                 resolved_mock_path,
+                extra: a.extra,
             });
         }
 
@@ -139,6 +568,150 @@ pub fn list_datasets_with_assets(
     }
 
     Ok(out)
+}
+
+#[tauri::command]
+pub fn analyze_dataset_assets(paths: Vec<String>) -> Result<Vec<DerivedDatasetAsset>, String> {
+    Ok(analyze_dataset_asset_paths(&paths)
+        .into_iter()
+        .map(|analysis| DerivedDatasetAsset {
+            path: analysis.path,
+            asset_name: analysis.asset_name,
+            file_type: analysis.file_type,
+            participant_id: analysis.participant_id,
+            file_role: analysis.file_role,
+            derived_fields: analysis.derived_fields,
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub fn analyze_dataset_assets_summary(paths: Vec<String>) -> Result<DerivedDatasetAssetSummary, String> {
+    let summary = summarize_dataset_asset_paths(&paths);
+    Ok(DerivedDatasetAssetSummary {
+        assets: summary
+            .assets
+            .into_iter()
+            .map(|analysis| DerivedDatasetAsset {
+                path: analysis.path,
+                asset_name: analysis.asset_name,
+                file_type: analysis.file_type,
+                participant_id: analysis.participant_id,
+                file_role: analysis.file_role,
+                derived_fields: analysis.derived_fields,
+            })
+            .collect(),
+        suggested_columns: summary.suggested_columns,
+    })
+}
+
+#[tauri::command]
+pub fn summarize_dataset_processing(
+    assets: Vec<UiDatasetAssetInput>,
+) -> Result<DatasetProcessingSummary, String> {
+    let mut participant_ids = BTreeSet::new();
+    let mut primary_asset_count = 0usize;
+    let mut reference_count = 0usize;
+    let mut index_count = 0usize;
+    let mut missing_reference = 0usize;
+    let mut missing_index = 0usize;
+    let mut missing_participant = 0usize;
+
+    for asset in &assets {
+        let role = asset.file_role.trim().to_ascii_lowercase();
+        let file_type = asset.file_type.trim();
+
+        if !asset.participant_id.trim().is_empty() {
+            participant_ids.insert(asset.participant_id.trim().to_string());
+        }
+
+        match role.as_str() {
+            "reference" => reference_count += 1,
+            "index" => index_count += 1,
+            _ => {
+                if !asset.path.trim().is_empty() {
+                    primary_asset_count += 1;
+                }
+            }
+        }
+
+        if !asset.path.trim().is_empty() && (role.is_empty() || role == "primary") {
+            if asset.participant_id.trim().is_empty() {
+                missing_participant += 1;
+            }
+            if (file_type == "Aligned Reads" || file_type == "Variants")
+                && ui_asset_metadata_value(asset, "reference_file").is_none()
+            {
+                missing_reference += 1;
+            }
+            if (file_type == "Aligned Reads"
+                && ui_asset_metadata_value(asset, "aligned_index").is_none())
+                || (file_type == "Variants"
+                    && ui_asset_metadata_value(asset, "vcf_index").is_none())
+            {
+                missing_index += 1;
+            }
+        }
+    }
+
+    let mut warnings = Vec::new();
+    let mut suggested_actions = Vec::new();
+
+    if missing_participant > 0 {
+        warnings.push(format!(
+            "{} asset{} still need participant IDs",
+            missing_participant,
+            if missing_participant == 1 { "" } else { "s" }
+        ));
+        suggested_actions.push(DatasetProcessingAction {
+            key: "participant_id".to_string(),
+            label: "Derive Participant IDs".to_string(),
+            description: "Fill participant IDs from filenames before grouping or flow requests.".to_string(),
+        });
+    }
+
+    if missing_reference > 0 {
+        warnings.push(format!(
+            "{} primary asset{} still need a reference attachment",
+            missing_reference,
+            if missing_reference == 1 { "" } else { "s" }
+        ));
+        suggested_actions.push(DatasetProcessingAction {
+            key: "reference_file".to_string(),
+            label: "Attach References".to_string(),
+            description: "Use detected reference files and builds to connect aligned or variant assets.".to_string(),
+        });
+    }
+
+    if missing_index > 0 {
+        warnings.push(format!(
+            "{} primary asset{} still need an index link",
+            missing_index,
+            if missing_index == 1 { "" } else { "s" }
+        ));
+        suggested_actions.push(DatasetProcessingAction {
+            key: "file_role".to_string(),
+            label: "Link Index Files".to_string(),
+            description: "Detect primary vs index files, then populate aligned or variant index relationships.".to_string(),
+        });
+    }
+
+    if participant_ids.len() > 1 {
+        suggested_actions.push(DatasetProcessingAction {
+            key: "group_by_participant".to_string(),
+            label: "Group By Participant".to_string(),
+            description: "You have multiple participant IDs, so this dataset can be structured around participant records.".to_string(),
+        });
+    }
+
+    Ok(DatasetProcessingSummary {
+        participant_count: participant_ids.len(),
+        primary_asset_count,
+        reference_count,
+        index_count,
+        warnings,
+        suggested_actions,
+    })
 }
 
 #[tauri::command]
@@ -267,6 +840,139 @@ pub fn unpublish_dataset(name: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn save_dataset_with_files(
     state: tauri::State<'_, AppState>,
+    manifest: biovault::cli::commands::datasets::DatasetManifest,
+    original_name: Option<String>,
+) -> Result<DatasetSaveResult, String> {
+    save_dataset_manifest_internal(state, manifest, original_name).await
+}
+
+#[tauri::command]
+pub async fn save_dataset_from_ui(
+    state: tauri::State<'_, AppState>,
+    request: SaveDatasetFromUiRequest,
+) -> Result<DatasetSaveResult, String> {
+    validate_ui_dataset_assets(&request.assets)?;
+    let config = load_config_best_effort();
+    let email = config.email.clone();
+
+    let mut manifest = biovault::cli::commands::datasets::DatasetManifest {
+        name: request.name.trim().to_string(),
+        description: request.description.map(|value| value.trim().to_string()).filter(|value| !value.is_empty()),
+        version: request
+            .version
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        schema: Some("net.biovault.datasets:1.0.0".to_string()),
+        author: None,
+        public_url: None,
+        private_url: None,
+        http_relay_servers: vec![],
+        extra: BTreeMap::from([
+            (
+                "enabled_columns".to_string(),
+                serde_yaml::to_value(request.enabled_columns).unwrap_or(serde_yaml::Value::Sequence(vec![])),
+            ),
+            (
+                "custom_columns".to_string(),
+                serde_yaml::to_value(request.custom_columns).unwrap_or(serde_yaml::Value::Sequence(vec![])),
+            ),
+        ]),
+        ..Default::default()
+    };
+    manifest.shape = infer_ui_dataset_shape(&request.assets);
+
+    let mut grouped_assets: BTreeMap<String, Vec<UiDatasetAssetInput>> = BTreeMap::new();
+    let mut standalone_assets = Vec::new();
+    for asset in request.assets.into_iter().filter(|asset| {
+        !asset.name.trim().is_empty()
+            && (!asset.path.trim().is_empty()
+                || !asset.mock_path.trim().is_empty()
+                || !asset.mock_url.trim().is_empty())
+    }) {
+        if let Some(group) = ui_asset_group(&asset) {
+            grouped_assets.entry(group).or_default().push(asset);
+        } else {
+            standalone_assets.push(asset);
+        }
+    }
+
+    for (group_key, rows) in grouped_assets {
+        manifest.assets.insert(
+            group_key.clone(),
+            build_twin_list_asset(group_key, rows, &manifest.name, &email),
+        );
+    }
+
+    for asset in standalone_assets {
+        let private_path = non_empty_trimmed(&asset.path);
+        let mock_path = non_empty_trimmed(&asset.mock_path);
+        let mock_url = non_empty_trimmed(&asset.mock_url)
+            .or_else(|| mock_path.clone().filter(|value| is_url_like(value)));
+        let mut extra = BTreeMap::new();
+        extra.insert(
+            "file_type".to_string(),
+            serde_yaml::Value::String(asset.file_type),
+        );
+        extra.insert(
+            "participant_id".to_string(),
+            serde_yaml::Value::String(asset.participant_id),
+        );
+        extra.insert(
+            "file_role".to_string(),
+            serde_yaml::Value::String(asset.file_role),
+        );
+        for (key, value) in asset.metadata {
+            extra.insert(key, serde_yaml::Value::String(value));
+        }
+        if let Some(url) = mock_url.clone() {
+            extra.insert(
+                "mock_url".to_string(),
+                serde_yaml::Value::String(url),
+            );
+        }
+
+        let kind = if private_path.is_some() && (mock_path.is_some() || mock_url.is_some()) {
+            Some("twin".to_string())
+        } else {
+            Some("file".to_string())
+        };
+        let mock_yaml = mock_url
+            .as_ref()
+            .map(|url| serde_yaml::Value::String(url.clone()));
+        let mock_mapping = mock_path
+            .filter(|value| !is_url_like(value))
+            .map(|path| biovault::cli::commands::datasets::DatasetAssetMappingEndpoint {
+                file_path: Some(path),
+                db_file_id: None,
+                entries: None,
+            });
+
+        manifest.assets.insert(
+            asset.name.clone(),
+            biovault::cli::commands::datasets::DatasetAsset {
+                kind,
+                mock: mock_yaml,
+                mappings: Some(biovault::cli::commands::datasets::DatasetAssetMapping {
+                    private: private_path.map(|path| {
+                        biovault::cli::commands::datasets::DatasetAssetMappingEndpoint {
+                            file_path: Some(path),
+                            db_file_id: None,
+                            entries: None,
+                        }
+                    }),
+                    mock: mock_mapping,
+                }),
+                extra,
+                ..Default::default()
+            },
+        );
+    }
+
+    save_dataset_manifest_internal(state, manifest, request.original_name).await
+}
+
+async fn save_dataset_manifest_internal(
+    state: tauri::State<'_, AppState>,
     mut manifest: biovault::cli::commands::datasets::DatasetManifest,
     original_name: Option<String>,
 ) -> Result<DatasetSaveResult, String> {
@@ -385,7 +1091,21 @@ pub async fn save_dataset_with_files(
             asset.id = Some(Uuid::new_v4().to_string());
         }
         if asset.kind.is_none() {
-            asset.kind = Some("twin".to_string());
+            let has_private = asset
+                .mappings
+                .as_ref()
+                .and_then(|mapping| mapping.private.as_ref())
+                .is_some();
+            let has_mock = asset
+                .mappings
+                .as_ref()
+                .and_then(|mapping| mapping.mock.as_ref())
+                .is_some();
+            asset.kind = Some(if has_private && has_mock {
+                "twin".to_string()
+            } else {
+                "file".to_string()
+            });
         }
         if asset.url.is_none() {
             asset.url = Some(format!("{{root.private_url}}#assets.{}", asset_key));
@@ -454,6 +1174,10 @@ pub async fn save_dataset_with_files(
                 }
             }
         }
+    }
+
+    if manifest.shape.is_none() {
+        manifest.shape = infer_dataset_shape(&manifest);
     }
 
     // Save to DB

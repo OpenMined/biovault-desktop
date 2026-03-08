@@ -28,6 +28,7 @@
 		onKeydown,
 		kindLabel,
 		isEventMessage,
+		headerActions,
 		actions,
 		composerPrefix,
 		composerDropActive = false,
@@ -48,6 +49,7 @@
 		onKeydown?: (e: KeyboardEvent) => void
 		kindLabel?: ((msg: ChatMessage) => string | null | undefined) | null
 		isEventMessage?: ((msg: ChatMessage) => boolean) | null
+		headerActions?: Snippet<[ChatMessage]>
 		actions?: Snippet<[ChatMessage]>
 		composerPrefix?: Snippet
 		composerDropActive?: boolean
@@ -170,17 +172,22 @@
 										: 'rounded-2xl rounded-bl-md bg-card'}"
 								>
 									<Card.Content class="relative min-w-0 px-3 py-2 pr-10 pb-6">
-										<div class="mb-1 flex items-center gap-2">
-									{#if kindLabel}
-										{@const label = kindLabel(msg)}
-										{#if label}
-											<Badge variant="outline" class="h-4 border-0 bg-muted/80 px-1.5 text-[10px] font-medium text-foreground/75">{label}</Badge>
-										{/if}
-								{/if}
-									{#if !outgoing}
-										<p class="truncate text-[11px] font-medium text-muted-foreground">{msg.from}</p>
-									{/if}
-									</div>
+										<div class="mb-1 flex items-start justify-between gap-3">
+											<div class="flex min-w-0 items-center gap-2">
+												{#if kindLabel}
+													{@const label = kindLabel(msg)}
+													{#if label}
+														<Badge variant="outline" class="h-4 border-0 bg-muted/80 px-1.5 text-[10px] font-medium text-foreground/75">{label}</Badge>
+													{/if}
+												{/if}
+												{#if !outgoing}
+													<p class="truncate text-[11px] font-medium text-muted-foreground">{msg.from}</p>
+												{/if}
+											</div>
+											<div class="shrink-0">
+												{@render headerActions?.(msg)}
+											</div>
+										</div>
 
 										<p class="max-w-full min-w-0 whitespace-pre-wrap break-all text-[14px] leading-5 text-foreground/90">
 											{msg.body}

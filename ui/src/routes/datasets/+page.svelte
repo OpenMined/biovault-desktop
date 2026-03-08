@@ -5,7 +5,9 @@
 	import PageHeader from '$lib/components/page-header.svelte'
 	import CreateDatasetDialog from '$lib/components/create-dataset-dialog.svelte'
 	import CommunityDatasetCard from '$lib/components/community-dataset-card.svelte'
+	import RunFlowDialog from '$lib/components/run-flow-dialog.svelte'
 	import VerifyMockDialog from '$lib/components/verify-mock-dialog.svelte'
+	import * as Dialog from '$lib/components/ui/dialog/index.js'
 	import * as Empty from '$lib/components/ui/empty/index.js'
 	import * as Tooltip from '$lib/components/ui/tooltip/index.js'
 	import { Button } from '$lib/components/ui/button/index.js'
@@ -13,9 +15,14 @@
 	import PlusIcon from '@lucide/svelte/icons/plus'
 	import UploadIcon from '@lucide/svelte/icons/upload'
 	import PackageIcon from '@lucide/svelte/icons/package'
+	import PlayIcon from '@lucide/svelte/icons/play'
 	import StarIcon from '@lucide/svelte/icons/star'
 	import CircleHelpIcon from '@lucide/svelte/icons/circle-help'
 	import FolderIcon from '@lucide/svelte/icons/folder'
+	import FolderOpenIcon from '@lucide/svelte/icons/folder-open'
+	import FlaskConicalIcon from '@lucide/svelte/icons/flask-conical'
+	import GlobeIcon from '@lucide/svelte/icons/globe'
+	import Loader2Icon from '@lucide/svelte/icons/loader-2'
 	import { Badge } from '$lib/components/ui/badge/index.js'
 	import { toast } from 'svelte-sonner'
 
@@ -33,9 +40,22 @@
 			version: string
 			author: string
 			description?: string
+			public_url?: string
 			extra?: any
 		}
 		assets: DatasetAsset[]
+	}
+
+	interface SessionRecord {
+		session_id: string
+		name: string
+		status: string
+	}
+
+	interface Flow {
+		id: number
+		name: string
+		flow_path: string
 	}
 
 	interface DiscoveredDatasetAsset {
@@ -71,12 +91,35 @@
 	let verifyDialogOpen = $state(false)
 	let selectedForVerify = $state<FavoritedCommunityDataset | null>(null)
 	let importDropActive = $state(false)
+	let publishedByName = $state<Record<string, boolean>>({})
+	let publishPending = $state<string | null>(null)
+	let unpublishPending = $state<string | null>(null)
+	let startSessionPending = $state<string | null>(null)
+	let flowPickerOpen = $state(false)
+	let runningFlowDialogOpen = $state(false)
+	let flowsLoading = $state(false)
+	let flowsError: string | null = $state(null)
+	let availableFlows: Flow[] = $state([])
+	let selectedRunDataset: DatasetWithAssets | null = $state(null)
+	let selectedFlow: Flow | null = $state(null)
+
+	const sampleDatasetOptions = [
+		{ id: '1000g_chr22_vcf', title: '1000 Genomes chr22 VCF' },
+		{ id: 'genome_in_a_bottle_fastq', title: 'Genome In A Bottle FASTQ' },
+	]
 
 	async function loadDatasets() {
 		try {
 			loading = true
 			error = null
 			datasets = await invoke<DatasetWithAssets[]>('list_datasets_with_assets')
+			const statuses = await Promise.all(
+				datasets.map(async (item) => [
+					item.dataset.name,
+					await invoke<boolean>('is_dataset_published', { name: item.dataset.name }).catch(() => false),
+				] as const),
+			)
+			publishedByName = Object.fromEntries(statuses)
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e)
 		} finally {
@@ -116,6 +159,109 @@
 
 	function handleDatasetCreated() {
 		void Promise.all([loadDatasets(), loadFavoritedCommunityDatasets()])
+	}
+
+	async function openDatasetsFolder(name: string) {
+		try {
+			const datasetsFolder = await invoke<string>('get_datasets_folder_path')
+			await invoke('open_folder', { path: `${datasetsFolder}/${name}` })
+		} catch (e) {
+			toast.error('Failed to open dataset folder', {
+				description: e instanceof Error ? e.message : String(e),
+			})
+		}
+	}
+
+	async function publishDataset(name: string) {
+		publishPending = name
+		try {
+			await invoke('publish_dataset', { name, copyMock: true })
+			publishedByName = { ...publishedByName, [name]: true }
+			toast.success(`Published ${name}`)
+		} catch (e) {
+			toast.error('Failed to publish dataset', {
+				description: e instanceof Error ? e.message : String(e),
+			})
+		} finally {
+			publishPending = null
+		}
+	}
+
+	async function unpublishDataset(name: string) {
+		unpublishPending = name
+		try {
+			await invoke('unpublish_dataset', { name })
+			publishedByName = { ...publishedByName, [name]: false }
+			toast.success(`Unpublished ${name}`)
+		} catch (e) {
+			toast.error('Failed to unpublish dataset', {
+				description: e instanceof Error ? e.message : String(e),
+			})
+		} finally {
+			unpublishPending = null
+		}
+	}
+
+	async function startDatasetSession(item: DatasetWithAssets) {
+		const publicUrl = item.dataset.public_url?.trim()
+		if (!publicUrl) {
+			toast.error('Dataset is missing a public URL')
+			return
+		}
+
+		startSessionPending = item.dataset.name
+		try {
+			const session = await invoke<SessionRecord>('create_session_with_datasets', {
+				request: {
+					name: item.dataset.name,
+					description: item.dataset.description || null,
+				},
+				datasets: [publicUrl],
+			})
+			toast.success(`Started session for ${item.dataset.name}`)
+			await goto(`/collaborate/sessions/${session.session_id}`)
+		} catch (e) {
+			toast.error('Failed to start session', {
+				description: e instanceof Error ? e.message : String(e),
+			})
+		} finally {
+			startSessionPending = null
+		}
+	}
+
+	async function loadFlows() {
+		try {
+			flowsLoading = true
+			flowsError = null
+			availableFlows = await invoke<Flow[]>('get_flows')
+		} catch (e) {
+			flowsError = e instanceof Error ? e.message : String(e)
+		} finally {
+			flowsLoading = false
+		}
+	}
+
+	async function openRunFlowPicker(item: DatasetWithAssets) {
+		selectedRunDataset = item
+		selectedFlow = null
+		flowPickerOpen = true
+		await loadFlows()
+	}
+
+	function confirmFlowRun() {
+		if (!selectedRunDataset || !selectedFlow) return
+		flowPickerOpen = false
+		runningFlowDialogOpen = true
+	}
+
+	async function handleDatasetRunStarted() {
+		const datasetName = selectedRunDataset?.dataset.name
+		const flowName = selectedFlow?.name
+		runningFlowDialogOpen = false
+		if (datasetName && flowName) {
+			toast.success(`Started ${flowName} for ${datasetName}`)
+		}
+		await goto('/runs')
 	}
 
 	function openFavoritedDataset(item: FavoritedCommunityDataset) {
@@ -162,6 +308,35 @@
 		}
 		storePendingDatasetImport(normalized)
 		await goto('/datasets/new?source=import')
+	}
+
+	async function openDatasetsRootFolder() {
+		try {
+			const datasetsFolder = await invoke<string>('get_datasets_folder_path')
+			await invoke('open_folder', { path: datasetsFolder })
+		} catch (e) {
+			toast.error('Failed to open datasets folder', {
+				description: e instanceof Error ? e.message : String(e),
+			})
+		}
+	}
+
+	async function importSampleDataset(sampleId: string) {
+		try {
+			const result = await invoke<{ folder?: string; data_dir?: string }>('fetch_sample_data_with_progress', {
+				samples: [sampleId],
+			})
+			const folder = result?.folder || result?.data_dir
+			if (!folder) {
+				toast.error('Sample data download completed but no folder was returned')
+				return
+			}
+			await startImportedDataset([folder])
+		} catch (e) {
+			toast.error('Failed to import sample data', {
+				description: e instanceof Error ? e.message : String(e),
+			})
+		}
 	}
 
 	async function selectImportFiles() {
@@ -231,6 +406,14 @@
 
 <div class="flex h-full flex-col">
 	<PageHeader title="Datasets" description="Manage your datasets and data sources">
+		<Button size="sm" variant="ghost" onclick={openDatasetsRootFolder}>
+			<FolderOpenIcon class="size-4" />
+			Open Folder
+		</Button>
+		<Button size="sm" variant="outline" onclick={() => importSampleDataset(sampleDatasetOptions[0].id)}>
+			<FlaskConicalIcon class="size-4" />
+			Sample Data
+		</Button>
 		<Button size="sm" data-testid="datasets-new" onclick={() => (createDialogOpen = true)}>
 			<PlusIcon class="size-4" />
 			New Dataset
@@ -292,10 +475,16 @@
 							</div>
 
 							<div class="flex items-center justify-center">
-								<Button variant="outline" onclick={() => goto('/explore')}>
-									<DatabaseIcon class="size-4" />
-									Explore Datasets in BioVault Explorer
-								</Button>
+								<div class="flex flex-wrap items-center justify-center gap-2">
+									<Button variant="outline" onclick={() => importSampleDataset(sampleDatasetOptions[0].id)}>
+										<FlaskConicalIcon class="size-4" />
+										Import Sample Data
+									</Button>
+									<Button variant="outline" onclick={() => goto('/explore')}>
+										<DatabaseIcon class="size-4" />
+										Explore Datasets in BioVault Explorer
+									</Button>
+								</div>
 							</div>
 						</div>
 					</Empty.Content>
@@ -367,6 +556,12 @@
 									<div class="flex-1 min-w-0">
 										<div class="flex items-center gap-2">
 											<h3 class="truncate text-sm font-semibold">{item.dataset.name}</h3>
+											{#if publishedByName[item.dataset.name]}
+												<Badge variant="secondary" class="h-5 text-[10px] uppercase tracking-wider">
+													<GlobeIcon class="mr-1 size-2.5" />
+													Published
+												</Badge>
+											{/if}
 											{#if item.dataset.extra?.is_network}
 												<Badge variant="outline" class="h-5 text-[10px] uppercase tracking-wider">
 													<StarIcon class="mr-1 size-2.5 fill-foreground text-foreground" />
@@ -386,6 +581,86 @@
 								{#if item.dataset.description}
 									<p class="mt-2 line-clamp-2 text-sm text-muted-foreground">{item.dataset.description}</p>
 								{/if}
+								<div class="mt-3 flex flex-wrap items-center gap-2">
+									<Button
+										variant="ghost"
+										size="sm"
+										class="h-8 px-2"
+										onclick={(e) => {
+											e.stopPropagation()
+											void openRunFlowPicker(item)
+										}}
+									>
+										<PlayIcon class="size-4" />
+										Run Flow
+									</Button>
+									<Button
+										variant="ghost"
+										size="sm"
+										class="h-8 px-2"
+										disabled={startSessionPending === item.dataset.name}
+										onclick={(e) => {
+											e.stopPropagation()
+											startDatasetSession(item)
+										}}
+									>
+										{#if startSessionPending === item.dataset.name}
+											<Loader2Icon class="size-4 animate-spin" />
+										{:else}
+											<PackageIcon class="size-4" />
+										{/if}
+										Start Session
+									</Button>
+									<Button
+										variant="ghost"
+										size="sm"
+										class="h-8 px-2"
+										onclick={(e) => {
+											e.stopPropagation()
+											openDatasetsFolder(item.dataset.name)
+										}}
+									>
+										<FolderOpenIcon class="size-4" />
+										Folder
+									</Button>
+									{#if publishedByName[item.dataset.name]}
+										<Button
+											variant="ghost"
+											size="sm"
+											class="h-8 px-2"
+											disabled={unpublishPending === item.dataset.name}
+											onclick={(e) => {
+												e.stopPropagation()
+												unpublishDataset(item.dataset.name)
+											}}
+										>
+											{#if unpublishPending === item.dataset.name}
+												<Loader2Icon class="size-4 animate-spin" />
+											{:else}
+												<GlobeIcon class="size-4" />
+											{/if}
+											Unpublish
+										</Button>
+									{:else}
+										<Button
+											variant="outline"
+											size="sm"
+											class="h-8 px-2"
+											disabled={publishPending === item.dataset.name}
+											onclick={(e) => {
+												e.stopPropagation()
+												publishDataset(item.dataset.name)
+											}}
+										>
+											{#if publishPending === item.dataset.name}
+												<Loader2Icon class="size-4 animate-spin" />
+											{:else}
+												<GlobeIcon class="size-4" />
+											{/if}
+											Publish
+										</Button>
+									{/if}
+								</div>
 							</button>
 						{/each}
 					</div>
@@ -401,7 +676,80 @@
 	onExplore={() => goto('/explore')}
 	onImportFiles={selectImportFiles}
 	onImportFolder={selectImportFolder}
+	onImportSampleData={startImportedDataset}
 />
+
+<Dialog.Root bind:open={flowPickerOpen}>
+	<Dialog.Content class="max-w-lg">
+		<Dialog.Header>
+			<Dialog.Title>Run Flow</Dialog.Title>
+			<Dialog.Description>
+				{#if selectedRunDataset}
+					Choose a flow to run with <b>{selectedRunDataset.dataset.name}</b>.
+				{:else}
+					Choose a flow to run.
+				{/if}
+			</Dialog.Description>
+		</Dialog.Header>
+
+		<div class="py-4">
+			{#if flowsLoading}
+				<div class="flex items-center justify-center py-8">
+					<Loader2Icon class="size-5 animate-spin text-muted-foreground" />
+				</div>
+			{:else if flowsError}
+				<div class="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+					{flowsError}
+				</div>
+			{:else if availableFlows.length === 0}
+				<div class="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
+					No flows installed yet.
+				</div>
+			{:else}
+				<div class="space-y-2 max-h-[280px] overflow-y-auto">
+					{#each availableFlows as flow (flow.id)}
+						<button
+							type="button"
+							class="flex w-full items-center gap-3 rounded-lg border px-3 py-3 text-left transition-colors hover:bg-accent {selectedFlow?.id === flow.id
+								? 'border-primary bg-primary/5'
+								: ''}"
+							onclick={() => (selectedFlow = flow)}
+						>
+							<div class="flex size-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+								<PlayIcon class="size-4" />
+							</div>
+							<div class="min-w-0 flex-1">
+								<div class="truncate text-sm font-medium">{flow.name}</div>
+								<div class="truncate text-xs text-muted-foreground">
+									{flow.flow_path.split('/').pop()}
+								</div>
+							</div>
+						</button>
+					{/each}
+				</div>
+			{/if}
+		</div>
+
+		<Dialog.Footer>
+			<Button variant="outline" onclick={() => (flowPickerOpen = false)}>Cancel</Button>
+			<Button onclick={confirmFlowRun} disabled={!selectedFlow || flowsLoading}>
+				<PlayIcon class="size-4" />
+				Continue
+			</Button>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>
+
+{#if selectedRunDataset && selectedFlow}
+	<RunFlowDialog
+		bind:open={runningFlowDialogOpen}
+		pipelineId={selectedFlow.id}
+		pipelineName={selectedFlow.name}
+		initialDatasetName={selectedRunDataset.dataset.name}
+		lockDatasetSelection={true}
+		onRunStarted={handleDatasetRunStarted}
+	/>
+{/if}
 
 {#if selectedForVerify}
 	<VerifyMockDialog

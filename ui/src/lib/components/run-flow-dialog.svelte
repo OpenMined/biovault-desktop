@@ -40,11 +40,20 @@
 		onOpenChange?: (open: boolean) => void
 		pipelineId: number
 		pipelineName: string
+		initialDatasetName?: string | null
+		lockDatasetSelection?: boolean
 		onRunStarted?: () => void
 	}
 
-	let { open = $bindable(false), onOpenChange, pipelineId, pipelineName, onRunStarted }: Props =
-		$props()
+	let {
+		open = $bindable(false),
+		onOpenChange,
+		pipelineId,
+		pipelineName,
+		initialDatasetName = null,
+		lockDatasetSelection = false,
+		onRunStarted,
+	}: Props = $props()
 
 	let datasets: DatasetWithAssets[] = $state([])
 	let loading = $state(true)
@@ -58,6 +67,14 @@
 			loading = true
 			error = null
 			datasets = await invoke<DatasetWithAssets[]>('list_datasets_with_assets')
+			if (initialDatasetName) {
+				const matched = datasets.find((item) => item.dataset.name === initialDatasetName) ?? null
+				selectedDataset = matched
+				runWithoutDataset = matched ? false : !lockDatasetSelection
+				if (lockDatasetSelection && !matched) {
+					error = `Dataset "${initialDatasetName}" is no longer available.`
+				}
+			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e)
 		} finally {
@@ -71,7 +88,7 @@
 		if (newOpen) {
 			// Reset state when opening
 			selectedDataset = null
-			runWithoutDataset = false
+			runWithoutDataset = !lockDatasetSelection && !initialDatasetName
 			error = null
 			loadDatasets()
 		}
@@ -253,39 +270,61 @@
 				</div>
 			{:else}
 				<div class="space-y-3">
-					<!-- Run without dataset option -->
-					<button
-						type="button"
-						onclick={selectNoDataset}
-						class="w-full flex items-center gap-3 rounded-lg border p-3 text-left transition-all hover:bg-accent {runWithoutDataset
-							? 'border-primary bg-primary/5'
-							: ''}"
-					>
-						<div
-							class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"
+					{#if !lockDatasetSelection}
+						<button
+							type="button"
+							onclick={selectNoDataset}
+							class="w-full flex items-center gap-3 rounded-lg border p-3 text-left transition-all hover:bg-accent {runWithoutDataset
+								? 'border-primary bg-primary/5'
+								: ''}"
 						>
-							<PlayIcon class="size-5" />
+							<div
+								class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"
+							>
+								<PlayIcon class="size-5" />
+							</div>
+							<div class="flex-1 min-w-0">
+								<div class="font-medium text-sm">Run with defaults</div>
+								<div class="text-muted-foreground text-xs">Use the flow's default input values</div>
+							</div>
+							{#if runWithoutDataset}
+								<div class="flex size-6 items-center justify-center rounded-full bg-primary text-white">
+									<CheckIcon class="size-4" />
+								</div>
+							{/if}
+						</button>
+					{/if}
+
+					{#if selectedDataset && lockDatasetSelection}
+						<div class="rounded-lg border p-3">
+							<div class="mb-1 text-xs uppercase tracking-[0.18em] text-muted-foreground">Dataset</div>
+							<div class="flex items-center gap-3">
+								<div class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+									<PackageIcon class="size-5" />
+								</div>
+								<div class="flex-1 min-w-0">
+									<div class="font-medium text-sm">{selectedDataset.dataset.name}</div>
+									<div class="text-muted-foreground text-xs">
+										v{selectedDataset.dataset.version || '1.0.0'}
+										{#if selectedDataset.assets}
+											• {selectedDataset.assets.length}
+											{selectedDataset.assets.length === 1 ? 'file' : 'files'}
+										{/if}
+									</div>
+								</div>
+							</div>
 						</div>
-						<div class="flex-1 min-w-0">
-							<div class="font-medium text-sm">Run with defaults</div>
-							<div class="text-muted-foreground text-xs">Use the flow's default input values</div>
-						</div>
-						{#if runWithoutDataset}
-							<div class="flex size-6 items-center justify-center rounded-full bg-primary text-white">
-								<CheckIcon class="size-4" />
+					{:else if datasets.length > 0}
+						{#if !lockDatasetSelection}
+							<div class="relative">
+								<div class="absolute inset-0 flex items-center">
+									<span class="w-full border-t"></span>
+								</div>
+								<div class="relative flex justify-center text-xs uppercase">
+									<span class="bg-background px-2 text-muted-foreground">Or select a dataset</span>
+								</div>
 							</div>
 						{/if}
-					</button>
-
-					{#if datasets.length > 0}
-						<div class="relative">
-							<div class="absolute inset-0 flex items-center">
-								<span class="w-full border-t"></span>
-							</div>
-							<div class="relative flex justify-center text-xs uppercase">
-								<span class="bg-background px-2 text-muted-foreground">Or select a dataset</span>
-							</div>
-						</div>
 
 						<div class="space-y-2 max-h-[240px] overflow-y-auto">
 							{#each datasets as item (item.dataset.name)}
@@ -297,6 +336,7 @@
 									item.dataset.name
 										? 'border-primary bg-primary/5'
 										: ''}"
+									disabled={lockDatasetSelection}
 								>
 									<div
 										class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"
@@ -322,6 +362,14 @@
 									{/if}
 								</button>
 							{/each}
+						</div>
+					{:else}
+						<div class="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
+							{#if lockDatasetSelection}
+								No datasets available for this flow run.
+							{:else}
+								No datasets available. You can still run the flow without one.
+							{/if}
 						</div>
 					{/if}
 				</div>

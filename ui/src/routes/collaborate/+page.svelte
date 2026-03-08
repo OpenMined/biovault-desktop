@@ -25,7 +25,9 @@
 	import Loader2Icon from '@lucide/svelte/icons/loader-2'
 	import PlusIcon from '@lucide/svelte/icons/plus'
 	import CheckIcon from '@lucide/svelte/icons/check'
+	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down'
 	import Clock3Icon from '@lucide/svelte/icons/clock-3'
+	import FolderOpenIcon from '@lucide/svelte/icons/folder-open'
 	import MessageSquareIcon from '@lucide/svelte/icons/message-square'
 	import PlayIcon from '@lucide/svelte/icons/play'
 	import SquareIcon from '@lucide/svelte/icons/square'
@@ -226,6 +228,7 @@
 	let selectedThreadSessionIds = $state<string[]>([])
 	let threadChatReloadSignal = $state(0)
 	let selectedThreadLatestMessageBySender = $state<Record<string, number>>({})
+	let selectedThreadMessages = $state<VaultMessage[]>([])
 	let installedModuleRefs = $state<Set<string>>(new Set())
 	let installedFlows = $state<InstalledFlow[]>([])
 	let flowRuns = $state<FlowRun[]>([])
@@ -377,6 +380,15 @@
 		return typeof name === 'string' && name.trim().length > 0 ? name.trim() : null
 	}
 
+	function getSessionResponseName(msg: VaultMessage): string | null {
+		const body = msg.body?.trim() || ''
+		const quoted = body.match(/session invite for "([^"]+)"/i)
+		if (quoted?.[1]?.trim()) return quoted[1].trim()
+		const trailing = body.match(/Created session:\s*(.+)$/i)
+		if (trailing?.[1]?.trim()) return trailing[1].trim()
+		return null
+	}
+
 	function getFlowRequestMeta(msg: VaultMessage): Record<string, unknown> | null {
 		const meta = msg.metadata || {}
 		const fr = meta.flow_request
@@ -407,6 +419,51 @@
 		const flowVersion = requestMeta?.flow_version
 		if (typeof flowVersion === 'string' && flowVersion.trim()) return flowVersion.trim()
 		return null
+	}
+
+	function getFlowRequestStatusSummary(msg: VaultMessage): {
+		label: string
+		className: string
+		description: string
+	} {
+		const importedFlow = getImportedFlowForRequest(msg)
+		const missingModuleDeps = getMissingFlowRequestModuleDependencies(msg)
+		const completedRuns = getCompletedRunsForRequest(msg)
+		const datasetName = getFlowRequestDatasetName(msg)
+
+		if (!importedFlow) {
+			return {
+				label: 'Ready to import',
+				className: 'border-sky-500/30 bg-sky-500/10 text-sky-700',
+				description: 'Import the requested flow to inspect it locally.',
+			}
+		}
+		if (completedRuns.length > 0) {
+			return {
+				label: 'Results ready',
+				className: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700',
+				description: 'A completed run is available to send back.',
+			}
+		}
+		if (missingModuleDeps.length > 0) {
+			return {
+				label: `${missingModuleDeps.length} deps missing`,
+				className: 'border-amber-500/30 bg-amber-500/10 text-amber-700',
+				description: 'Some modules are still missing before the flow can run cleanly.',
+			}
+		}
+		if (datasetName) {
+			return {
+				label: 'Ready to run',
+				className: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700',
+				description: 'The flow is imported and ready to run on the requested dataset.',
+			}
+		}
+		return {
+			label: 'Imported',
+			className: 'border-zinc-500/20 bg-zinc-500/10 text-zinc-700',
+			description: 'The flow is available locally.',
+		}
 	}
 
 	function extractUrlsFromAssetsForRun(
@@ -524,6 +581,36 @@
 		const meta = msg.metadata || {}
 		const fr = meta.flow_results
 		return fr && typeof fr === 'object' ? (fr as Record<string, unknown>) : null
+	}
+
+	function getFlowRequestSubmissionId(msg: VaultMessage): string | null {
+		const requestMeta = getFlowRequestMeta(msg)
+		const submissionId = requestMeta?.submission_id
+		return typeof submissionId === 'string' && submissionId.trim() ? submissionId.trim() : null
+	}
+
+	function getFlowResultsSubmissionId(msg: VaultMessage): string | null {
+		const resultsMeta = getFlowResultsMeta(msg)
+		const submissionId = resultsMeta?.submission_id
+		return typeof submissionId === 'string' && submissionId.trim() ? submissionId.trim() : null
+	}
+
+	function hasSentResultsForRequest(msg: VaultMessage): boolean {
+		const requestSubmissionId = getFlowRequestSubmissionId(msg)
+		const requestFlowName = getFlowRequestFlowName(msg)?.toLowerCase() ?? null
+		return selectedThreadMessages.some((candidate) => {
+			if (candidate.id === msg.id) return false
+			if ((candidate.from || '').toLowerCase() !== currentUserEmail.toLowerCase()) return false
+			const resultsMeta = getFlowResultsMeta(candidate)
+			if (!resultsMeta) return false
+			const resultSubmissionId = getFlowResultsSubmissionId(candidate)
+			if (requestSubmissionId && resultSubmissionId) {
+				return requestSubmissionId === resultSubmissionId
+			}
+			const resultFlowName =
+				typeof resultsMeta.flow_name === 'string' ? resultsMeta.flow_name.toLowerCase() : null
+			return !!requestFlowName && !!resultFlowName && requestFlowName === resultFlowName
+		})
 	}
 
 	function getThreadEventMeta(msg: VaultMessage): Record<string, unknown> | null {
@@ -1131,6 +1218,7 @@
 			const threadMessages = await invoke<VaultMessage[]>('get_thread_messages', {
 				threadId: thread.thread_id,
 			})
+			selectedThreadMessages = threadMessages || []
 			const latestBySender: Record<string, number> = {}
 			const sessionIds = new Set<string>()
 			for (const msg of threadMessages || []) {
@@ -1148,6 +1236,7 @@
 			selectedThreadLatestMessageBySender = latestBySender
 			selectedThreadSessionIds = Array.from(sessionIds)
 		} catch {
+			selectedThreadMessages = []
 			selectedThreadLatestMessageBySender = {}
 			selectedThreadSessionIds = []
 		}
@@ -1659,27 +1748,6 @@
 		}
 	}
 
-	async function syncFlowRequestFromMessage(msg: VaultMessage) {
-		const meta = getFlowRequestMeta(msg)
-		const flowLocation = meta?.flow_location
-		if (typeof flowLocation !== 'string' || !flowLocation.trim()) return
-		setEventLoading(msg.id, true)
-		try {
-			const status = await waitForFlowRequestReady(flowLocation, 12, 700)
-			if (status?.ready) {
-				toast.success('Flow request synced')
-			} else {
-				toast.info('Sync requested', {
-					description: status?.reason || 'Flow files may still be arriving.',
-				})
-			}
-		} catch (e) {
-			toast.error('Failed to sync request', { description: String(e) })
-		} finally {
-			setEventLoading(msg.id, false)
-		}
-	}
-
 	async function openFlowRequestFolderFromMessage(msg: VaultMessage) {
 		const meta = getFlowRequestMeta(msg)
 		const flowLocation = meta?.flow_location
@@ -1744,6 +1812,18 @@
 			toast.error('Request missing dataset name')
 			return
 		}
+		const confirmed = await confirm(
+			dataType === 'mock'
+				? `Run ${flow.name} against mock data for ${datasetName}?`
+				: `Run ${flow.name} against real data for ${datasetName}?`,
+			{
+				title: dataType === 'mock' ? 'Run Mock Data?' : 'Run Real Data?',
+				kind: dataType === 'mock' ? 'info' : 'warning',
+				okLabel: dataType === 'mock' ? 'Run Mock' : 'Run Real',
+				cancelLabel: 'Cancel',
+			},
+		)
+		if (!confirmed) return
 		setEventLoading(msg.id, true)
 		try {
 			const datasets = await invoke<DatasetWithAssetsForRun[]>('list_datasets_with_assets')
@@ -2153,26 +2233,161 @@
 							</div>
 						{/if}
 
-							<div class="min-h-0 min-w-0 flex-1 overflow-hidden">
-								<ConversationPanel
-									adapter={threadConversationAdapter(selectedThread)}
-									reloadSignal={threadChatReloadSignal}
-								>
-								{#snippet actions(msg)}
-									{@const typed = msg as VaultMessage}
-									{@const kind = getMessageKind(typed)}
-									{#if kind === 'session_invite'}
-										{@const sessionId = getSessionInviteId(typed)}
-										{@const outgoingInvite = isOutgoingMessage(typed)}
-										{#if sessionId}
-											<div class="mt-2 flex gap-2">
-												{#if outgoingInvite}
-													<p class="text-xs text-muted-foreground self-center">
-														Invitation sent to {typed.to}
-													</p>
+								<div class="min-h-0 min-w-0 flex-1 overflow-hidden">
+									<ConversationPanel
+										adapter={threadConversationAdapter(selectedThread)}
+										reloadSignal={threadChatReloadSignal}
+									>
+									{#snippet headerActions(msg)}
+										{@const typed = msg as VaultMessage}
+										{@const kind = getMessageKind(typed)}
+										{#if kind === 'flow_request'}
+											{@const importedFlow = getImportedFlowForRequest(typed)}
+											{@const flowName = getFlowRequestFlowName(typed)}
+											{@const flowVersion = getFlowRequestFlowVersion(typed)}
+											<div class="flex items-center gap-1.5 text-[11px]">
+												{#if importedFlow}
+													<button
+														type="button"
+														class="truncate font-medium text-foreground transition-opacity hover:opacity-70"
+														onclick={() => openRequestedFlow(typed)}
+													>
+														{flowName ?? 'Requested flow'}
+													</button>
 												{:else}
-													<Button
-														size="sm"
+													<span class="truncate font-medium text-foreground">
+														{flowName ?? 'Requested flow'}
+													</span>
+												{/if}
+												{#if flowVersion}
+													<span class="text-muted-foreground">v{flowVersion}</span>
+												{/if}
+												<Tooltip.Provider delayDuration={0}>
+													<Tooltip.Root>
+														<Tooltip.Trigger>
+															{#snippet child({ props })}
+																<Button
+																	{...props}
+																	variant="ghost"
+																	size="icon"
+																	class="size-6 rounded-full"
+																	disabled={eventActionLoading[typed.id]}
+																	aria-label="Open flow request folder"
+																	onclick={() => openFlowRequestFolderFromMessage(typed)}
+																>
+																	<FolderOpenIcon class="size-3.5" />
+																</Button>
+															{/snippet}
+														</Tooltip.Trigger>
+														<Tooltip.Content side="top">Open request folder</Tooltip.Content>
+													</Tooltip.Root>
+												</Tooltip.Provider>
+											</div>
+										{/if}
+										{#if kind === 'flow_results'}
+											{@const resultsMeta = getFlowResultsMeta(typed)}
+											{@const resultsFlowName =
+												typeof resultsMeta?.flow_name === 'string' ? resultsMeta.flow_name : null}
+											<div class="flex items-center gap-1.5 text-[11px]">
+												<span class="truncate font-medium text-foreground">
+													{resultsFlowName ?? 'Run results'}
+												</span>
+												<Tooltip.Provider delayDuration={0}>
+													<Tooltip.Root>
+														<Tooltip.Trigger>
+															{#snippet child({ props })}
+																<Button
+																	{...props}
+																	size="icon"
+																	variant="ghost"
+																	class="size-6 rounded-full"
+																	disabled={eventActionLoading[typed.id]}
+																	aria-label="Open results folder"
+																	onclick={() => openFlowResultsFolderFromMessage(typed)}
+																>
+																	<FolderOpenIcon class="size-3.5" />
+																</Button>
+															{/snippet}
+														</Tooltip.Trigger>
+														<Tooltip.Content side="top">Open results folder</Tooltip.Content>
+													</Tooltip.Root>
+												</Tooltip.Provider>
+											</div>
+										{/if}
+										{#if kind === 'session_invite'}
+											{@const sessionId = getSessionInviteId(typed)}
+											{@const sessionName = getSessionInviteName(typed)}
+											{#if sessionId}
+												<div class="flex items-center gap-1.5 text-[11px]">
+													<span class="truncate font-medium text-foreground">
+														{sessionName ?? 'Session'}
+													</span>
+													<Tooltip.Provider delayDuration={0}>
+														<Tooltip.Root>
+															<Tooltip.Trigger>
+																{#snippet child({ props })}
+																	<Button
+																		{...props}
+																		variant="ghost"
+																		size="icon"
+																		class="size-6 rounded-full"
+																		aria-label="Open session folder"
+																		onclick={() => openSessionFolderById(sessionId)}
+																	>
+																		<FolderOpenIcon class="size-3.5" />
+																	</Button>
+																{/snippet}
+															</Tooltip.Trigger>
+															<Tooltip.Content side="top">Open session folder</Tooltip.Content>
+														</Tooltip.Root>
+													</Tooltip.Provider>
+												</div>
+											{/if}
+										{/if}
+										{#if kind === 'session_response'}
+											{@const sessionId = getSessionResponseId(typed)}
+											{@const sessionName = getSessionResponseName(typed)}
+											{#if sessionId}
+												<div class="flex items-center gap-1.5 text-[11px]">
+													<span class="truncate font-medium text-foreground">
+														{sessionName ?? 'Session'}
+													</span>
+													<Tooltip.Provider delayDuration={0}>
+														<Tooltip.Root>
+															<Tooltip.Trigger>
+																{#snippet child({ props })}
+																	<Button
+																		{...props}
+																		variant="ghost"
+																		size="icon"
+																		class="size-6 rounded-full"
+																		aria-label="Open session folder"
+																		onclick={() => openSessionFolderById(sessionId)}
+																	>
+																		<FolderOpenIcon class="size-3.5" />
+																	</Button>
+																{/snippet}
+															</Tooltip.Trigger>
+															<Tooltip.Content side="top">Open session folder</Tooltip.Content>
+														</Tooltip.Root>
+													</Tooltip.Provider>
+												</div>
+											{/if}
+										{/if}
+									{/snippet}
+									{#snippet actions(msg)}
+										{@const typed = msg as VaultMessage}
+										{@const kind = getMessageKind(typed)}
+										{#if kind === 'session_invite'}
+											{@const sessionId = getSessionInviteId(typed)}
+											{@const outgoingInvite = isOutgoingMessage(typed)}
+											{#if sessionId}
+												<div class="mt-2 flex gap-2">
+													{#if outgoingInvite}
+														<p class="text-xs text-muted-foreground self-center">Pending</p>
+													{:else}
+														<Button
+															size="sm"
 														class="h-7 text-xs"
 														disabled={eventActionLoading[typed.id]}
 														onclick={() => acceptSessionFromMessage(typed)}
@@ -2185,243 +2400,140 @@
 														class="h-7 text-xs"
 														disabled={eventActionLoading[typed.id]}
 														onclick={() => declineSessionFromMessage(typed)}
-													>
-														Decline
-													</Button>
-												{/if}
-												<Button
-													variant="outline"
-													size="sm"
-													class="h-7 text-xs"
-													onclick={() => openSessionFolderById(sessionId)}
-												>
-													Open Folder
-											</Button>
-										</div>
-								{/if}
-								{/if}
-								{#if kind === 'flow_request'}
-									{@const outgoingFlowRequest = isOutgoingMessage(typed)}
-									{@const moduleDeps = getFlowRequestModuleDependencies(typed)}
-									{@const missingModuleDeps = getMissingFlowRequestModuleDependencies(typed)}
-									{@const importedFlow = getImportedFlowForRequest(typed)}
-									{@const completedRuns = getCompletedRunsForRequest(typed)}
-									{@const flowName = getFlowRequestFlowName(typed)}
-									{@const flowVersion = getFlowRequestFlowVersion(typed)}
-									{@const datasetName = getFlowRequestDatasetName(typed)}
-									{#if outgoingFlowRequest}
-										<div class="mt-2 space-y-2 rounded-md border border-border/70 bg-muted/20 p-2">
-											<div class="flex flex-wrap items-center gap-1.5">
-												<Badge variant="outline" class="text-[10px]">FLOW REQUEST</Badge>
-												{#if flowName}
-													<Badge variant="outline" class="text-[10px]">
-														{flowName}
-													</Badge>
-												{/if}
-												{#if flowVersion}
-													<Badge variant="outline" class="text-[10px]">
-														v{flowVersion}
-													</Badge>
-												{/if}
-											</div>
-											<p class="text-sm leading-5 text-foreground/90">
-												Please run the {flowName ?? 'requested'} flow on your private data{#if datasetName}
-													in dataset {datasetName}
-												{/if}.
-											</p>
-											<p class="text-[11px] text-muted-foreground">
-												Sent to {typed.to}
-											</p>
-										</div>
-									{:else}
-										<div class="mt-2 space-y-2 rounded-md border border-border/70 bg-muted/20 p-2">
-											<div class="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-												<span class="rounded border px-1.5 py-0.5">
-													Flow: {importedFlow ? 'imported' : 'not imported'}
-												</span>
-												<span class="rounded border px-1.5 py-0.5">
-													Dependencies: {moduleDeps.length - missingModuleDeps.length}/{moduleDeps.length} installed
-												</span>
-												{#if completedRuns.length > 0}
-													<span class="rounded border px-1.5 py-0.5">
-														Runs ready: {completedRuns.length}
-													</span>
-												{/if}
-											</div>
-											{#if datasetName}
-												<p class="text-[11px] text-muted-foreground">
-													Dataset: <span class="font-medium text-foreground">{datasetName}</span>
-												</p>
-											{/if}
-											{#if moduleDeps.length > 0}
-												<div class="flex flex-wrap gap-1">
-													{#each moduleDeps as dep (dep)}
-														<Badge
-															variant="outline"
-															class={`text-[10px] ${
-																missingModuleDeps.includes(dep)
-																	? 'border-amber-500/40 text-amber-700'
-																	: 'border-emerald-500/40 text-emerald-700'
-															}`}
 														>
-															{dep} • {missingModuleDeps.includes(dep) ? 'missing' : 'installed'}
-														</Badge>
-													{/each}
+															Decline
+														</Button>
+													{/if}
+												</div>
+									{/if}
+									{/if}
+										{#if kind === 'flow_request'}
+										{@const outgoingFlowRequest = isOutgoingMessage(typed)}
+										{@const importedFlow = getImportedFlowForRequest(typed)}
+										{@const completedRuns = getCompletedRunsForRequest(typed)}
+											{@const datasetName = getFlowRequestDatasetName(typed)}
+											{@const resultsAlreadySent = hasSentResultsForRequest(typed)}
+											{#if outgoingFlowRequest}
+												{#if datasetName}
+													<div class="mt-1 text-[11px] text-muted-foreground">{datasetName}</div>
+												{/if}
+											{:else}
+											<div class="mt-2 space-y-2">
+												<div class="flex flex-wrap items-center gap-2">
+													{#if !importedFlow}
+														<Button
+															size="sm"
+															class="h-8 rounded-lg px-3 text-xs"
+															disabled={eventActionLoading[typed.id]}
+															onclick={() => importFlowFromMessage(typed)}
+														>
+															Import Flow
+														</Button>
+													{:else}
+														<Button
+															size="sm"
+															variant="outline"
+															class="h-8 rounded-lg px-3 text-xs"
+															disabled={eventActionLoading[typed.id] || !datasetName}
+															onclick={() => runRequestedFlowFromMessage(typed, 'mock')}
+														>
+															Run Mock
+														</Button>
+														<Button
+															size="sm"
+															class="h-8 rounded-lg px-3 text-xs"
+															disabled={eventActionLoading[typed.id] || !datasetName}
+															onclick={() => runRequestedFlowFromMessage(typed, 'real')}
+														>
+															Run Real
+														</Button>
+													{/if}
+												</div>
+												{#if importedFlow && completedRuns.length > 0}
+													<div class="flex flex-wrap items-center gap-2">
+														{#if resultsAlreadySent}
+															<span class="text-[11px] text-muted-foreground">Results sent</span>
+														{:else}
+															<Select
+																class="h-8 rounded-lg border bg-background px-2 text-xs"
+																value={String(selectedRunIdForMessage(typed) ?? '')}
+																onchange={(e) => {
+																	const selectedValue = Number((e.currentTarget as HTMLSelectElement).value)
+																	selectedRunIdByMessage = {
+																		...selectedRunIdByMessage,
+																		[typed.id]: selectedValue,
+																	}
+																}}
+															>
+																{#each completedRuns as run (run.id)}
+																	<option value={run.id}>Run #{run.id}</option>
+																{/each}
+															</Select>
+															<Button
+																size="sm"
+																variant="outline"
+																class="h-8 rounded-lg px-3 text-xs"
+																disabled={eventActionLoading[typed.id]}
+																onclick={() => sendResultsBackFromMessage(typed)}
+															>
+																Send Results
+															</Button>
+														{/if}
+													</div>
+												{/if}
+											</div>
+											{/if}
+										{/if}
+											{#if kind === 'flow_results'}
+												<div class="mt-2">
+													<Button
+														size="sm"
+														class="h-7 text-xs"
+														disabled={eventActionLoading[typed.id]}
+														onclick={() => importFlowResultsFromMessage(typed)}
+													>
+														Import Results
+													</Button>
 												</div>
 											{/if}
-											<div class="flex flex-wrap items-center gap-2">
-												{#if importedFlow}
-													<Button
-														size="sm"
-														class="h-7 text-xs"
-														disabled={eventActionLoading[typed.id]}
-														onclick={() => openRequestedFlow(typed)}
-													>
-														Open Flow
-													</Button>
-												{:else}
-													<Button
-														size="sm"
-														class="h-7 text-xs"
-														disabled={eventActionLoading[typed.id]}
-														onclick={() => importFlowFromMessage(typed)}
-													>
-														Import Flow
-													</Button>
-												{/if}
-												{#if importedFlow}
-													<Button
-														size="sm"
-														variant="outline"
-														class="h-7 text-xs"
-														disabled={eventActionLoading[typed.id] || !datasetName}
-														onclick={() => runRequestedFlowFromMessage(typed, 'mock')}
-													>
-														Run Mock
-													</Button>
-													<Button
-														size="sm"
-														variant="outline"
-														class="h-7 text-xs"
-														disabled={eventActionLoading[typed.id] || !datasetName}
-														onclick={() => runRequestedFlowFromMessage(typed, 'real')}
-													>
-														Run Real
-													</Button>
-												{/if}
+								{#if kind === 'session_response'}
+									{@const responseSessionId = getSessionResponseId(typed)}
+									{#if responseSessionId}
+											<div class="mt-2 flex gap-2">
 												<Button
 													size="sm"
 													variant="outline"
-													class="h-7 text-xs"
-													disabled={eventActionLoading[typed.id]}
-													onclick={() => syncFlowRequestFromMessage(typed)}
-												>
-													Sync Request
-												</Button>
-												<Button
-													size="sm"
-													variant="outline"
-													class="h-7 text-xs"
-													disabled={eventActionLoading[typed.id]}
-													onclick={() => openFlowRequestFolderFromMessage(typed)}
-												>
-													Open Folder
-												</Button>
-												{#if importedFlow && completedRuns.length > 0}
-														<Select
-															class="h-7 rounded-md border bg-background px-2 text-xs"
-															value={String(selectedRunIdForMessage(typed) ?? '')}
-															onchange={(e) => {
-																const selectedValue = Number((e.currentTarget as HTMLSelectElement).value)
-																selectedRunIdByMessage = {
-																...selectedRunIdByMessage,
-																[typed.id]: selectedValue,
-															}
-														}}
-													>
-															{#each completedRuns as run (run.id)}
-																<option value={run.id}>Run #{run.id}</option>
-															{/each}
-														</Select>
-													<Button
-														size="sm"
-														variant="outline"
-														class="h-7 text-xs"
-														disabled={eventActionLoading[typed.id]}
-														onclick={() => sendResultsBackFromMessage(typed)}
-													>
-														Send Results
-													</Button>
-												{/if}
-											</div>
-										</div>
-									{/if}
-								{/if}
-									{#if kind === 'flow_results'}
-										<div class="mt-2 flex gap-2">
-											<Button
-												size="sm"
-												class="h-7 text-xs"
-												disabled={eventActionLoading[typed.id]}
-												onclick={() => openFlowResultsFolderFromMessage(typed)}
-											>
-												Open Folder
-											</Button>
-											<Button
-												size="sm"
-												variant="outline"
-												class="h-7 text-xs"
-												disabled={eventActionLoading[typed.id]}
-												onclick={() => importFlowResultsFromMessage(typed)}
-											>
-												Import Results
-											</Button>
-										</div>
-									{/if}
-							{#if kind === 'session_response'}
-								{@const responseSessionId = getSessionResponseId(typed)}
-								{#if responseSessionId}
-										<div class="mt-2 flex gap-2">
-												<Button
-													size="sm"
-													variant="outline"
-													class="h-7 text-xs"
-													onclick={() => openSessionFolderById(responseSessionId)}
-												>
-													Open Folder
-												</Button>
-											<Button
-												size="sm"
-												variant="outline"
 												class="h-7 text-xs"
 												disabled={eventActionLoading[typed.id]}
 												onclick={() => openSessionFromMessage(typed)}
 											>
-												Open Folder
+												Open Session
 											</Button>
 									</div>
 								{/if}
 							{/if}
-							{#if kind === 'thread_event'}
-								{@const threadEvent = getThreadEventMeta(typed)}
-								{@const eventType = typeof threadEvent?.type === 'string' ? threadEvent.type : null}
-								{#if eventType === 'session_created'}
-									{@const eventSessionId =
-										typeof threadEvent?.session_id === 'string' ? threadEvent.session_id : null}
-									{@const eventSessionName =
-										typeof threadEvent?.session_name === 'string' ? threadEvent.session_name : 'session'}
-									{#if eventSessionId}
-											<Button
-												variant="link"
-												size="sm"
-												class="h-auto p-0 text-emerald-900/90"
-												onclick={() => setActiveSessionForSelectedThread(eventSessionId)}
-											>
-												{eventSessionName}
-											</Button>
+								{#if kind === 'thread_event'}
+									{@const threadEvent = getThreadEventMeta(typed)}
+									{@const eventType = typeof threadEvent?.type === 'string' ? threadEvent.type : null}
+									{#if eventType === 'session_created'}
+										{@const eventSessionId =
+											typeof threadEvent?.session_id === 'string' ? threadEvent.session_id : null}
+										{@const eventSessionName =
+											typeof threadEvent?.session_name === 'string' ? threadEvent.session_name : 'session'}
+										{#if eventSessionId}
+											<div class="mt-1">
+												<Button
+													variant="link"
+													size="sm"
+													class="h-auto p-0 text-muted-foreground"
+													onclick={() => setActiveSessionForSelectedThread(eventSessionId)}
+												>
+													Open session: {eventSessionName}
+												</Button>
+											</div>
+										{/if}
 									{/if}
 								{/if}
-							{/if}
 								{/snippet}
 							</ConversationPanel>
 						</div>

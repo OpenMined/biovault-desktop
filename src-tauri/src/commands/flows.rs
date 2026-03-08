@@ -1527,7 +1527,8 @@ pub async fn flow_request_sync_status(
             flow_yaml_present: false,
             missing_paths: Vec::new(),
             reason: Some(
-                "Flow files are not synced yet. Click \"Sync Request\" first.".to_string(),
+                "Flow files are not synced yet. Wait a moment and try importing again."
+                    .to_string(),
             ),
         });
     }
@@ -1540,7 +1541,8 @@ pub async fn flow_request_sync_status(
             flow_yaml_present: false,
             missing_paths: Vec::new(),
             reason: Some(
-                "flow.yaml has not synced yet. Click \"Sync Request\" and try again.".to_string(),
+                "flow.yaml has not synced yet. Wait a moment and try importing again."
+                    .to_string(),
             ),
         });
     }

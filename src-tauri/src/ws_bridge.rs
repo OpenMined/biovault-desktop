@@ -401,6 +401,10 @@ fn get_commands_list() -> serde_json::Value {
         // Datasets
         cmd("get_datasets", "datasets", true),
         cmd("list_datasets_with_assets", "datasets", true),
+        cmd("analyze_dataset_assets", "datasets", true),
+        cmd("analyze_dataset_assets_summary", "datasets", true),
+        cmd("summarize_dataset_processing", "datasets", true),
+        cmd_async("save_dataset_from_ui", "datasets", false),
         cmd_async("save_dataset_with_files", "datasets", false),
         cmd("upsert_dataset_manifest", "datasets", false),
         cmd("is_dataset_published", "datasets", true),
@@ -3260,6 +3264,49 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
         // --------------------------------------------------------------------
         "get_datasets" | "list_datasets_with_assets" => {
             let result = crate::commands::datasets::list_datasets_with_assets(state.clone())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "analyze_dataset_assets" => {
+            let paths: Vec<String> = serde_json::from_value(
+                args.get("paths")
+                    .cloned()
+                    .ok_or_else(|| "Missing paths".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse paths: {}", e))?;
+            let result = crate::commands::datasets::analyze_dataset_assets(paths)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "analyze_dataset_assets_summary" => {
+            let paths: Vec<String> = serde_json::from_value(
+                args.get("paths")
+                    .cloned()
+                    .ok_or_else(|| "Missing paths".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse paths: {}", e))?;
+            let result = crate::commands::datasets::analyze_dataset_assets_summary(paths)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "summarize_dataset_processing" => {
+            let assets: Vec<crate::commands::datasets::UiDatasetAssetInput> = serde_json::from_value(
+                args.get("assets")
+                    .cloned()
+                    .ok_or_else(|| "Missing assets".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse assets: {}", e))?;
+            let result = crate::commands::datasets::summarize_dataset_processing(assets)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "save_dataset_from_ui" => {
+            let request: crate::commands::datasets::SaveDatasetFromUiRequest =
+                serde_json::from_value(
+                    args.get("request")
+                        .cloned()
+                        .ok_or_else(|| "Missing request".to_string())?,
+                )
+                .map_err(|e| format!("Failed to parse request: {}", e))?;
+            let result = crate::commands::datasets::save_dataset_from_ui(state.clone(), request)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "save_dataset_with_files" => {

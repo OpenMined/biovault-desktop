@@ -13,10 +13,12 @@
 
 	let {
 		adapter,
+		headerActions: headerActionsSnippet,
 		actions,
 		reloadSignal = 0,
 	}: {
 		adapter: ConversationAdapter
+		headerActions?: Snippet<[ChatMessage]>
 		actions?: Snippet<[ChatMessage]>
 		reloadSignal?: number
 	} = $props()
@@ -173,6 +175,9 @@
 	isEventMessage={adapter.isEventMessage}
 	{scrollToBottomToken}
 >
+	{#snippet headerActions(msg)}
+		{@render headerActionsSnippet?.(msg)}
+	{/snippet}
 	{#snippet actions(msg)}
 		{@render actions?.(msg)}
 	{/snippet}

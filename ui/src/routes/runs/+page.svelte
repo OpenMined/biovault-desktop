@@ -8,6 +8,7 @@
 	import { Button } from '$lib/components/ui/button/index.js'
 	import { Badge } from '$lib/components/ui/badge/index.js'
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
+	import * as Tooltip from '$lib/components/ui/tooltip/index.js'
 	import PlayCircleIcon from '@lucide/svelte/icons/play-circle'
 	import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw'
 	import CheckCircleIcon from '@lucide/svelte/icons/check-circle'
@@ -426,6 +427,53 @@
 		return Math.max(0, Math.min(100, Math.round(((state.completed || 0) / state.total) * 100)))
 	}
 
+	function runMetaItems(run: RunRecord): string[] {
+		const items = [`Run #${run.id}`, formatTimestamp(run.created_at), formatDuration(run)]
+		if (run.participant_count) items.push(`${run.participant_count} participants`)
+		return items
+	}
+
+	function getResultsSummary(run: RunRecord): {
+		label: string
+		description: string
+		className: string
+	} {
+		const status = run.status.toLowerCase()
+		if (['completed', 'success'].includes(status)) {
+			return {
+				label: 'Results ready',
+				description: 'Outputs are available in the results directory.',
+				className: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700',
+			}
+		}
+		if (status === 'running') {
+			return {
+				label: 'Running',
+				description: 'Logs are live and partial outputs may already be present.',
+				className: 'border-sky-500/30 bg-sky-500/10 text-sky-700',
+			}
+		}
+		if (status === 'paused') {
+			return {
+				label: 'Paused',
+				description: 'Current outputs remain in the work directory until the run resumes.',
+				className: 'border-amber-500/30 bg-amber-500/10 text-amber-700',
+			}
+		}
+		if (['failed', 'error'].includes(status)) {
+			return {
+				label: 'Run failed',
+				description: 'Check logs and the work directory for partial outputs or errors.',
+				className: 'border-red-500/30 bg-red-500/10 text-red-700',
+			}
+		}
+		return {
+			label: 'Pending',
+			description: 'Results will appear here once execution begins.',
+			className: 'border-zinc-500/20 bg-zinc-500/10 text-zinc-700',
+		}
+	}
+
 	const runningCount = $derived(runs.filter((r) => r.status.toLowerCase() === 'running').length)
 	const pausedCount = $derived(runs.filter((r) => r.status.toLowerCase() === 'paused').length)
 	const completedCount = $derived(
@@ -438,10 +486,19 @@
 
 <div class="flex h-full flex-col">
 	<PageHeader title="Runs" description="Flow execution history, status, and logs">
-		<Button size="sm" variant="outline" onclick={() => loadRuns(false)} disabled={loading || refreshing}>
-			<RefreshCwIcon class="size-4 {loading || refreshing ? 'animate-spin' : ''}" />
-			Refresh
-		</Button>
+		<div class="flex items-center gap-3">
+			<div class="text-xs text-muted-foreground">
+				{#if refreshing}
+					Updating...
+				{:else}
+					Auto-refreshes every 5s
+				{/if}
+			</div>
+			<Button size="sm" variant="outline" onclick={() => loadRuns(false)} disabled={loading || refreshing}>
+				<RefreshCwIcon class="size-4 {loading || refreshing ? 'animate-spin' : ''}" />
+				Refresh
+			</Button>
+		</div>
 	</PageHeader>
 
 	<div class="flex-1 overflow-auto p-6">
@@ -507,6 +564,7 @@
 					{@const StatusIcon = statusInfo.icon}
 					{@const metadata = parseMetadata(run)}
 					{@const state = runStates[run.id]}
+					{@const resultsSummary = getResultsSummary(run)}
 					<div class="overflow-hidden rounded-xl border bg-card">
 						<div
 							role="button"
@@ -540,12 +598,13 @@
 										<Badge variant="outline" class="text-xs">Multiparty</Badge>
 									{/if}
 								</div>
-								<p class="text-muted-foreground mt-0.5 text-sm">
-									Run #{run.id} • {formatTimestamp(run.created_at)} • {formatDuration(run)}
-									{#if run.participant_count}
-										• {run.participant_count} participants
-									{/if}
-								</p>
+								<div class="mt-1.5 flex flex-wrap items-center gap-1.5">
+									{#each runMetaItems(run) as item}
+										<span class="text-muted-foreground rounded-full border bg-muted/30 px-2 py-0.5 text-xs">
+											{item}
+										</span>
+									{/each}
+								</div>
 								{#if state?.total && state.total > 0}
 									<div class="mt-2 flex items-center gap-3">
 										<div class="bg-muted h-1.5 flex-1 overflow-hidden rounded-full">
@@ -562,11 +621,6 @@
 							</div>
 
 							<div class="flex items-center gap-2" onclick={(e) => e.stopPropagation()}>
-								{#if flowUrl(run)}
-									<Button variant="ghost" size="sm" onclick={() => goto(flowUrl(run)!)}>
-										View Flow
-									</Button>
-								{/if}
 								{#if run.status.toLowerCase() === 'running'}
 									<Button
 										variant="outline"
@@ -598,6 +652,46 @@
 										{isActionPending(run.id, 'retry') ? 'Retrying...' : 'Retry'}
 									</Button>
 								{/if}
+								<Tooltip.Provider delayDuration={0}>
+									<Tooltip.Root>
+										<Tooltip.Trigger>
+											{#snippet child({ props })}
+												<Button
+													{...props}
+													variant="ghost"
+													size="icon"
+													class="size-8"
+													aria-label="Open results folder"
+													onclick={() => openResultsFolder(run)}
+												>
+													<FolderOpenIcon class="size-4" />
+												</Button>
+											{/snippet}
+										</Tooltip.Trigger>
+										<Tooltip.Content side="top">Open results folder</Tooltip.Content>
+									</Tooltip.Root>
+								</Tooltip.Provider>
+								{#if flowUrl(run)}
+									<Tooltip.Provider delayDuration={0}>
+										<Tooltip.Root>
+											<Tooltip.Trigger>
+												{#snippet child({ props })}
+													<Button
+														{...props}
+														variant="ghost"
+														size="icon"
+														class="size-8"
+														aria-label="View flow"
+														onclick={() => goto(flowUrl(run)!)}
+													>
+														<WorkflowIcon class="size-4" />
+													</Button>
+												{/snippet}
+											</Tooltip.Trigger>
+											<Tooltip.Content side="top">View flow</Tooltip.Content>
+										</Tooltip.Root>
+									</Tooltip.Provider>
+								{/if}
 								<DropdownMenu.Root>
 									<DropdownMenu.Trigger>
 										{#snippet child({ props })}
@@ -627,10 +721,60 @@
 
 						{#if isExpanded(run.id)}
 							<div class="border-t bg-muted/20 p-4">
-								<div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+								<div class="grid items-start gap-4 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
 									<div class="space-y-4">
-										<div class="rounded-lg border bg-background p-4">
-											<div class="mb-3 flex items-center gap-2 text-sm font-medium">
+										<div class="rounded-lg border bg-background/80 p-3.5">
+											<div class="mb-3 flex items-start justify-between gap-3">
+												<div>
+													<div class="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
+														Results
+													</div>
+													<div class="mt-1 text-sm text-muted-foreground">
+														{resultsSummary.description}
+													</div>
+												</div>
+												<span class={`rounded-full border px-2.5 py-1 text-[10px] font-medium ${resultsSummary.className}`}>
+													{resultsSummary.label}
+												</span>
+											</div>
+											<div class="grid gap-3 text-sm sm:grid-cols-2">
+												<div class="rounded-lg border border-border/60 bg-muted/20 p-3">
+													<div class="text-xs uppercase tracking-[0.12em] text-muted-foreground">
+														Results Directory
+													</div>
+													<div class="mt-1 break-all font-mono text-[12px] leading-5">
+														{run.results_dir || run.work_dir}
+													</div>
+												</div>
+												<div class="rounded-lg border border-border/60 bg-muted/20 p-3">
+													<div class="text-xs uppercase tracking-[0.12em] text-muted-foreground">
+														Last Updated
+													</div>
+													<div class="mt-1 font-medium text-foreground">
+														{run.completed_at ? formatTimestamp(run.completed_at) : formatTimestamp(run.created_at)}
+													</div>
+												</div>
+											</div>
+											<div class="mt-3 flex flex-wrap gap-2">
+												<Button size="sm" onclick={() => openResultsFolder(run)}>
+													<FolderOpenIcon class="size-4" />
+													Open Results
+												</Button>
+												<Button variant="outline" size="sm" onclick={() => openWorkFolder(run)}>
+													<HardDriveIcon class="size-4" />
+													Open Work Dir
+												</Button>
+												{#if flowUrl(run)}
+													<Button variant="outline" size="sm" onclick={() => goto(flowUrl(run)!)}>
+														<WorkflowIcon class="size-4" />
+														View Flow
+													</Button>
+												{/if}
+											</div>
+										</div>
+
+										<div class="rounded-lg border bg-background/80 p-3.5">
+											<div class="mb-3 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
 												<ActivityIcon class="size-4" />
 												Run State
 											</div>
@@ -639,29 +783,29 @@
 											{:else}
 												<div class="grid gap-3 text-sm sm:grid-cols-2">
 													<div>
-														<div class="text-muted-foreground">Status</div>
+														<div class="text-muted-foreground text-xs uppercase tracking-[0.12em]">Status</div>
 														<div class="font-medium">{state?.status || run.status}</div>
 													</div>
 													<div>
-														<div class="text-muted-foreground">Duration</div>
+														<div class="text-muted-foreground text-xs uppercase tracking-[0.12em]">Duration</div>
 														<div class="font-medium">{formatDuration(run)}</div>
 													</div>
 													<div>
-														<div class="text-muted-foreground">Progress</div>
+														<div class="text-muted-foreground text-xs uppercase tracking-[0.12em]">Progress</div>
 														<div class="font-medium">
 															{state?.completed ?? 0}/{state?.total ?? 0}
 														</div>
 													</div>
 													<div>
-														<div class="text-muted-foreground">Concurrency</div>
+														<div class="text-muted-foreground text-xs uppercase tracking-[0.12em]">Concurrency</div>
 														<div class="font-medium">{state?.concurrency ?? 'Auto'}</div>
 													</div>
 													<div>
-														<div class="text-muted-foreground">Containers</div>
+														<div class="text-muted-foreground text-xs uppercase tracking-[0.12em]">Containers</div>
 														<div class="font-medium">{state?.container_count ?? 0}</div>
 													</div>
 													<div>
-														<div class="text-muted-foreground">Updated</div>
+														<div class="text-muted-foreground text-xs uppercase tracking-[0.12em]">Updated</div>
 														<div class="font-medium">
 															{state?.last_updated ? formatTimestamp(state.last_updated) : '-'}
 														</div>
@@ -678,41 +822,33 @@
 											{/if}
 										</div>
 
-										<div class="rounded-lg border bg-background p-4">
-											<div class="mb-3 text-sm font-medium">Paths</div>
+										<div class="rounded-lg border bg-background/80 p-3.5">
+											<div class="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">Paths</div>
 											<div class="space-y-3 text-sm">
 												<div>
-													<div class="text-muted-foreground">Results Directory</div>
-													<div class="font-mono break-all">{run.results_dir || run.work_dir}</div>
-												</div>
-												<div>
-													<div class="text-muted-foreground">Work Directory</div>
+													<div class="text-muted-foreground text-xs uppercase tracking-[0.12em]">Work Directory</div>
 													<div class="font-mono break-all">{run.work_dir}</div>
 												</div>
-											</div>
-											<div class="mt-3 flex flex-wrap gap-2">
-												<Button variant="outline" size="sm" onclick={() => openResultsFolder(run)}>
-													<FolderOpenIcon class="size-4" />
-													Results
-												</Button>
-												<Button variant="outline" size="sm" onclick={() => openWorkFolder(run)}>
-													<HardDriveIcon class="size-4" />
-													Work Dir
-												</Button>
+												{#if run.results_dir}
+													<div>
+														<div class="text-muted-foreground text-xs uppercase tracking-[0.12em]">Results Directory</div>
+														<div class="font-mono break-all">{run.results_dir}</div>
+													</div>
+												{/if}
 											</div>
 										</div>
 
 										{#if run.metadata}
-											<div class="rounded-lg border bg-background p-4">
-												<div class="mb-2 text-sm font-medium">Metadata</div>
+											<div class="rounded-lg border bg-background/80 p-3.5">
+												<div class="mb-2 text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">Metadata</div>
 												<pre class="bg-muted overflow-x-auto rounded-md border p-3 text-xs">{JSON.stringify(metadata, null, 2)}</pre>
 											</div>
 										{/if}
 									</div>
 
-									<div class="rounded-lg border bg-background p-4">
+									<div class="rounded-lg border bg-background/80 p-3.5 lg:sticky lg:top-4">
 										<div class="mb-3 flex items-center justify-between gap-3">
-											<div class="flex items-center gap-2 text-sm font-medium">
+											<div class="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
 												<TerminalSquareIcon class="size-4" />
 												Live Logs
 											</div>
@@ -728,7 +864,7 @@
 												</Button>
 											</div>
 										</div>
-										<pre class="bg-muted min-h-[24rem] overflow-auto rounded-md border p-3 text-xs leading-5 whitespace-pre-wrap">{runLogs[run.id] || 'No logs available for this flow run yet. Logs will appear once execution starts.'}</pre>
+										<pre class="bg-muted h-[24rem] max-h-[70vh] overflow-auto rounded-md border p-3 font-mono text-xs leading-5 whitespace-pre-wrap">{runLogs[run.id] || 'No logs available for this flow run yet. Logs will appear once execution starts.'}</pre>
 									</div>
 								</div>
 							</div>
