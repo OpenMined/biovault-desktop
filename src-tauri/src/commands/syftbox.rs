@@ -1942,7 +1942,8 @@ pub async fn syftbox_request_otp(email: String, server_url: Option<String>) -> R
         Some(url) => url.to_string(),
     };
 
-    match biovault::cli::commands::syftbox::request_otp(Some(email), None, server_url.clone()).await {
+    match biovault::cli::commands::syftbox::request_otp(Some(email), None, server_url.clone()).await
+    {
         Ok(_) => {}
         Err(err) => {
             crate::desktop_log!("❌ syftbox_request_otp error: {:?}", err);
@@ -1953,7 +1954,10 @@ pub async fn syftbox_request_otp(email: String, server_url: Option<String>) -> R
                     server_target, err_text
                 ));
             }
-            return Err(format!("Failed to request OTP via {}: {}", server_target, err_text));
+            return Err(format!(
+                "Failed to request OTP via {}: {}",
+                server_target, err_text
+            ));
         }
     }
 
@@ -1993,7 +1997,10 @@ pub async fn syftbox_submit_otp(
             Ok(_) => {}
             Err(err) => {
                 crate::desktop_log!("❌ syftbox_submit_otp error: {:?}", err);
-                return Err(format!("Failed to verify OTP via {}: {}", server_target, err));
+                return Err(format!(
+                    "Failed to verify OTP via {}: {}",
+                    server_target, err
+                ));
             }
         }
     } else {

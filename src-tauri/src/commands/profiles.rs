@@ -260,19 +260,19 @@ pub fn clear_all_profiles_and_homes() -> Result<(), String> {
     for entry in &store.profiles {
         let home = PathBuf::from(&entry.biovault_home);
         if home.exists() {
-            fs::remove_dir_all(&home).map_err(|e| {
-                format!(
-                    "Failed to delete profile home {}: {}",
-                    home.display(),
-                    e
-                )
-            })?;
+            fs::remove_dir_all(&home)
+                .map_err(|e| format!("Failed to delete profile home {}: {}", home.display(), e))?;
         }
     }
 
     if store_path.exists() {
-        fs::remove_file(&store_path)
-            .map_err(|e| format!("Failed to remove profiles store {}: {}", store_path.display(), e))?;
+        fs::remove_file(&store_path).map_err(|e| {
+            format!(
+                "Failed to remove profiles store {}: {}",
+                store_path.display(),
+                e
+            )
+        })?;
     }
 
     if let Some(parent) = store_path.parent() {

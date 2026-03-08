@@ -2,7 +2,7 @@
 	import { page } from '$app/stores'
 	import { goto, beforeNavigate } from '$app/navigation'
 	import { invoke } from '@tauri-apps/api/core'
-	import { onMount } from 'svelte'
+	import { onMount, tick } from 'svelte'
 	import {
 		type ColumnDef,
 		type PaginationState,
@@ -30,6 +30,7 @@
 	import * as Dialog from '$lib/components/ui/dialog/index.js'
 	import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left'
 	import PackageIcon from '@lucide/svelte/icons/package'
+	import PlusIcon from '@lucide/svelte/icons/plus'
 	import SaveIcon from '@lucide/svelte/icons/save'
 	import TrashIcon from '@lucide/svelte/icons/trash-2'
 	import FileIcon from '@lucide/svelte/icons/file'
@@ -56,6 +57,10 @@
 		fileId: number | null
 		name: string
 		path: string
+		fileType: string
+		participantId: string
+		fileRole: string
+		metadata: Record<string, string>
 		exists: boolean
 		mockPath?: string
 		mockExists: boolean
@@ -97,7 +102,29 @@
 		count: number
 	}
 
-	let datasetName = $derived($page.params.name)
+	interface DerivedColumnDefinition {
+		key: string
+		label: string
+		description: string
+	}
+
+	interface StagedImportRow {
+		rowId: string
+		path: string
+		filename: string
+		extension: string
+		detectedType: string
+		confidence: 'high' | 'medium' | 'low'
+		participantId: string
+		assetName: string
+		fileRole: 'primary' | 'index' | 'reference' | 'mock' | 'unknown'
+		warnings: string[]
+	}
+
+	const PENDING_DATASET_IMPORT_KEY = 'biovault.pendingDatasetImportPaths'
+
+	let datasetName = $derived($page.params.name ?? '')
+	let isNewDataset = $derived(datasetName === 'new')
 
 	let loading = $state(true)
 	let saving = $state(false)
@@ -106,18 +133,17 @@
 	let isNetwork = $state(false)
 	let author = $state('')
 	let requestRunDialogOpen = $state(false)
-
 	const currentUserEmail = $derived(syftboxAuthStore.email || '')
 	const canRequestRun = $derived(isNetwork && author && author.toLowerCase() !== currentUserEmail.toLowerCase())
 
 	// Form state
-	let currentName = $state($page.params.name)
+	let currentName = $state($page.params.name ?? '')
 	let description = $state('')
 	let version = $state('1.0.0')
 	let assets = $state<Asset[]>([])
 
 	// Track changes for basic info only (assets auto-save)
-	let originalName = $state($page.params.name)
+	let originalName = $state($page.params.name ?? '')
 	let originalDescription = $state('')
 	let originalVersion = $state('1.0.0')
 	let hasInfoChanges = $derived(
@@ -126,6 +152,19 @@
 
 	let allAssetsHaveMocks = $derived(assets.length > 0 && assets.every((a) => a.mockPath))
 	let missingMockCount = $derived(assets.filter((a) => !a.mockPath).length)
+
+	let stagedRows = $state<StagedImportRow[]>([])
+	let stagedSelection = $state<RowSelectionState>({})
+	let stagingSearch = $state('')
+	let customColumnDraft = $state('')
+	let customColumns = $state<string[]>([])
+	let enabledColumns = $state<string[]>([])
+	let addColumnMenuOpen = $state(false)
+	let processingColumns = $state<string[]>([])
+	let stagingBusy = $state(false)
+	let postProcessEnabled = $state(true)
+	let applySuggestedColumns = $state(true)
+	let stageFolderPath = $state<string | null>(null)
 
 	// Table state
 	let pagination = $state<PaginationState>({ pageIndex: 0, pageSize: 20 })
@@ -148,8 +187,365 @@
 		[...fileTypeOptions].sort((a, b) => a.extension.localeCompare(b.extension)),
 	)
 
+	const detectedTypeByExtension: Record<string, string> = {
+		vcf: 'Variants',
+		'vcf.gz': 'Variants',
+		bcf: 'Variants',
+		bam: 'Aligned Reads',
+		cram: 'Aligned Reads',
+		fastq: 'Reads',
+		'fastq.gz': 'Reads',
+		fq: 'Reads',
+		'fq.gz': 'Reads',
+		csv: 'Table',
+		tsv: 'Table',
+		txt: 'Text',
+		json: 'Metadata',
+		yaml: 'Metadata',
+		yml: 'Metadata',
+		'fa': 'Reference',
+		fasta: 'Reference',
+	}
+	const derivedColumnDefinitions: Record<string, DerivedColumnDefinition> = {
+		participant_id: {
+			key: 'participant_id',
+			label: 'Participant ID',
+			description: 'Extract from filenames',
+		},
+		file_role: {
+			key: 'file_role',
+			label: 'File Role',
+			description: 'Primary, index, reference, or mock',
+		},
+		read_pair: {
+			key: 'read_pair',
+			label: 'Read Pair',
+			description: 'Detect R1 or R2 from reads',
+		},
+		lane: {
+			key: 'lane',
+			label: 'Lane',
+			description: 'Detect sequencing lane from filenames',
+		},
+		ref_version: {
+			key: 'ref_version',
+			label: 'Ref Version',
+			description: 'Infer hg19, hg38, GRCh37, or GRCh38',
+		},
+		aligned_index: {
+			key: 'aligned_index',
+			label: 'Aligned Index',
+			description: 'Link BAM/CRAM files to their index',
+		},
+		vcf_index: {
+			key: 'vcf_index',
+			label: 'VCF Index',
+			description: 'Link VCF files to their index',
+		},
+		reference_file: {
+			key: 'reference_file',
+			label: 'Reference File',
+			description: 'Attach matching reference files',
+		},
+		reference_index: {
+			key: 'reference_index',
+			label: 'Reference Index',
+			description: 'Attach FASTA index files',
+		},
+	}
+
+	function getExtension(path: string): string {
+		const filename = getFileName(path).toLowerCase()
+		if (filename.endsWith('.vcf.gz')) return 'vcf.gz'
+		if (filename.endsWith('.fastq.gz')) return 'fastq.gz'
+		if (filename.endsWith('.fq.gz')) return 'fq.gz'
+		const idx = filename.lastIndexOf('.')
+		return idx >= 0 ? filename.slice(idx + 1) : ''
+	}
+
+	function normalizeAssetName(value: string): string {
+		return value
+			.trim()
+			.toLowerCase()
+			.replace(/\.[^.]+$/g, '')
+			.replace(/[^a-z0-9]+/g, '_')
+			.replace(/^_+|_+$/g, '')
+	}
+
+	function inferParticipantId(filename: string): string {
+		const base = filename.replace(/\.[^.]+(\.[^.]+)?$/, '')
+		const token = base.match(/^([A-Za-z0-9_-]+)/)?.[1] || base
+		return token.replace(/[_-]+(R[12]|L\d{3}|S\d+)$/i, '')
+	}
+
+	function inferRefVersion(value: string): string {
+		const lower = value.toLowerCase()
+		if (lower.includes('grch38') || lower.includes('hg38')) return 'hg38'
+		if (lower.includes('grch37') || lower.includes('hg19')) return 'hg19'
+		if (lower.includes('chm13') || lower.includes('t2t')) return 't2t'
+		return ''
+	}
+
+	function inferLane(value: string): string {
+		return value.match(/(?:^|[_-])(L\d{3})(?:[_-]|$)/i)?.[1]?.toUpperCase() ?? ''
+	}
+
+	function inferReadPair(value: string): string {
+		const match =
+			value.match(/(?:^|[_-])(R[12])(?:[_-]|$)/i) ??
+			value.match(/(?:^|[_-])([12])(?:[_-]|$)/)
+		if (!match) return ''
+		return match[1].toUpperCase().startsWith('R') ? match[1].toUpperCase() : `R${match[1]}`
+	}
+
+	function normalizePathCandidate(path: string): string {
+		return path.toLowerCase()
+	}
+
+	function getFileStem(path: string): string {
+		const filename = getFileName(path).toLowerCase()
+		if (filename.endsWith('.vcf.gz')) return filename.slice(0, -7)
+		if (filename.endsWith('.fastq.gz')) return filename.slice(0, -9)
+		if (filename.endsWith('.fq.gz')) return filename.slice(0, -6)
+		const idx = filename.lastIndexOf('.')
+		return idx >= 0 ? filename.slice(0, idx) : filename
+	}
+
+	function findAssetByCandidates(candidates: string[], allAssets: Asset[]): Asset | null {
+		const normalized = new Set(candidates.map(normalizePathCandidate))
+		return (
+			allAssets.find((candidate) => candidate.path && normalized.has(normalizePathCandidate(candidate.path))) ??
+			null
+		)
+	}
+
+	function findAlignedIndexPath(asset: Asset, allAssets: Asset[]): string {
+		const extension = getExtension(asset.path)
+		const lowerPath = asset.path.toLowerCase()
+		const candidates =
+			extension === 'bam'
+				? [asset.path + '.bai', `${lowerPath.replace(/\.bam$/i, '')}.bai`]
+				: extension === 'cram'
+					? [asset.path + '.crai', `${lowerPath.replace(/\.cram$/i, '')}.crai`]
+					: []
+		return findAssetByCandidates(candidates, allAssets)?.path ?? ''
+	}
+
+	function findVariantIndexPath(asset: Asset, allAssets: Asset[]): string {
+		const extension = getExtension(asset.path)
+		const candidates =
+			extension === 'bcf'
+				? [asset.path + '.csi']
+				: [asset.path + '.tbi', asset.path + '.csi']
+		return findAssetByCandidates(candidates, allAssets)?.path ?? ''
+	}
+
+	function findReferenceAsset(asset: Asset, allAssets: Asset[]): Asset | null {
+		const assetRef = inferRefVersion(asset.path)
+		const references = allAssets.filter((candidate) => candidate.fileType === 'Reference')
+		if (references.length === 0) return null
+		if (!assetRef) return references[0] ?? null
+		return (
+			references.find((candidate) => inferRefVersion(candidate.path) === assetRef) ?? references[0] ?? null
+		)
+	}
+
+	function findReferenceIndexPath(referencePath: string, allAssets: Asset[]): string {
+		if (!referencePath) return ''
+		const candidates = [referencePath + '.fai']
+		const referenceStem = getFileStem(referencePath)
+		if (referenceStem) candidates.push(`${referenceStem}.fai`)
+		return findAssetByCandidates(candidates, allAssets)?.path ?? ''
+	}
+
+	function deriveColumnValue(asset: Asset, column: string, allAssets: Asset[]): string {
+		const filename = getFileName(asset.path)
+		switch (column) {
+			case 'participant_id':
+				return asset.participantId || inferParticipantId(filename)
+			case 'file_role':
+				return asset.fileRole || inferFileRole(filename, getExtension(asset.path))
+			case 'read_pair':
+				return inferReadPair(filename)
+			case 'lane':
+				return inferLane(filename)
+			case 'ref_version':
+				return inferRefVersion(asset.path)
+			case 'aligned_index':
+				return findAlignedIndexPath(asset, allAssets)
+			case 'vcf_index':
+				return findVariantIndexPath(asset, allAssets)
+			case 'reference_file':
+				return findReferenceAsset(asset, allAssets)?.path ?? ''
+			case 'reference_index': {
+				const referencePath = findReferenceAsset(asset, allAssets)?.path ?? ''
+				return findReferenceIndexPath(referencePath, allAssets)
+			}
+			default:
+				return asset.metadata[column] ?? ''
+		}
+	}
+
+	function populateDerivedColumn(column: string) {
+		const snapshot = [...assets]
+		assets = snapshot.map((asset) => {
+			const value = deriveColumnValue(asset, column, snapshot)
+			if (column === 'participant_id') return { ...asset, participantId: value }
+			if (column === 'file_role') return { ...asset, fileRole: value }
+			return { ...asset, metadata: { ...asset.metadata, [column]: value } }
+		})
+	}
+
+	function inferFileRole(filename: string, extension: string): StagedImportRow['fileRole'] {
+		const lower = filename.toLowerCase()
+		if (['bai', 'crai', 'tbi', 'fai'].includes(extension)) return 'index'
+		if (['fa', 'fasta'].includes(extension) || lower.includes('reference')) return 'reference'
+		if (lower.includes('mock')) return 'mock'
+		if (!extension) return 'unknown'
+		return 'primary'
+	}
+
+	function inferDetectedType(filename: string, extension: string): {
+		type: string
+		confidence: StagedImportRow['confidence']
+		warnings: string[]
+	} {
+		const warnings: string[] = []
+		const byExt = detectedTypeByExtension[extension]
+		if (byExt) {
+			if (extension === 'txt') warnings.push('Generic text file; review type before commit')
+			return { type: byExt, confidence: extension === 'txt' ? 'low' : 'high', warnings }
+		}
+		if (filename.toLowerCase().includes('mock')) {
+			return { type: 'Mock Data', confidence: 'medium', warnings }
+		}
+		warnings.push('Unknown file type')
+		return { type: 'Unknown', confidence: 'low', warnings }
+	}
+
+	function createAssetFromPath(filePath: string, partial?: Partial<Asset>): Asset {
+		const filename = getFileName(filePath)
+		const extension = getExtension(filePath)
+		const participantId = inferParticipantId(filename)
+		const { type } = inferDetectedType(filename, extension)
+		const fileRole = inferFileRole(filename, extension)
+		return {
+			rowId: partial?.rowId ?? crypto.randomUUID(),
+			fileId: partial?.fileId ?? null,
+			name: partial?.name ?? getFileName(filePath).split('.')[0] ?? '',
+			path: filePath,
+			fileType: partial?.fileType ?? type,
+			participantId: partial?.participantId ?? participantId,
+			fileRole: partial?.fileRole ?? fileRole,
+			metadata: partial?.metadata ?? {},
+			exists: partial?.exists ?? true,
+			mockPath: partial?.mockPath ?? '',
+			mockExists: partial?.mockExists ?? false,
+		}
+	}
+
+	function buildStagedRow(path: string): StagedImportRow {
+		const filename = getFileName(path)
+		const extension = getExtension(path)
+		const participantId = inferParticipantId(filename)
+		const { type, confidence, warnings } = inferDetectedType(filename, extension)
+		return {
+			rowId: crypto.randomUUID(),
+			path,
+			filename,
+			extension: extension || '—',
+			detectedType: type,
+			confidence,
+			participantId,
+			assetName: normalizeAssetName(filename) || 'asset',
+			fileRole: inferFileRole(filename, extension),
+			warnings,
+		}
+	}
+
+	function pathBasename(path: string): string {
+		return path.replace(/\/+$/, '').split('/').pop() || path
+	}
+
+	function guessDatasetName(paths: string[]): string {
+		const firstPath = paths[0]
+		if (!firstPath) return 'dataset'
+		return normalizeAssetName(pathBasename(firstPath)) || 'dataset'
+	}
+
+	const filteredStagedRows = $derived.by(() => {
+		const q = stagingSearch.trim().toLowerCase()
+		if (!q) return stagedRows
+		return stagedRows.filter((row) =>
+			[
+				row.filename,
+				row.path,
+				row.detectedType,
+				row.participantId,
+				row.assetName,
+				row.fileRole,
+			].some((value) => value.toLowerCase().includes(q)),
+		)
+	})
+
+	const selectedStagedIds = $derived(
+		Object.keys(stagedSelection).filter((id) => stagedSelection[id]),
+	)
+	const selectedStagedRows = $derived(
+		stagedRows.filter((row) => selectedStagedIds.includes(row.rowId)),
+	)
+	const availableColumnSuggestions = $derived.by(() => {
+		const fileTypes = new Set(assets.map((asset) => asset.fileType))
+		const fileRoles = new Set(assets.map((asset) => asset.fileRole))
+		const suggestions = new Set<string>()
+		if (fileTypes.size > 0) suggestions.add('participant_id')
+		if (fileRoles.size > 1 || fileRoles.has('index') || fileRoles.has('reference')) {
+			suggestions.add('file_role')
+		}
+		if (Array.from(fileTypes).some((type) => type === 'Reads')) {
+			suggestions.add('read_pair')
+			suggestions.add('lane')
+		}
+		if (Array.from(fileTypes).some((type) => type === 'Variants' || type === 'Aligned Reads')) {
+			suggestions.add('ref_version')
+			suggestions.add('reference_file')
+		}
+		if (Array.from(fileTypes).some((type) => type === 'Aligned Reads')) suggestions.add('aligned_index')
+		if (Array.from(fileTypes).some((type) => type === 'Variants')) suggestions.add('vcf_index')
+		if (Array.from(fileTypes).some((type) => type === 'Reference')) suggestions.add('reference_index')
+		return Array.from(suggestions).filter((column) => !enabledColumns.includes(column))
+	})
+	function updateAsset(assetId: string, patch: Partial<Asset>) {
+		assets = assets.map((asset) => (asset.rowId === assetId ? { ...asset, ...patch } : asset))
+	}
+
+	function updateAssetMetadata(assetId: string, key: string, value: string) {
+		assets = assets.map((asset) =>
+			asset.rowId === assetId
+				? { ...asset, metadata: { ...asset.metadata, [key]: value } }
+				: asset,
+		)
+	}
+
+	async function addSuggestedColumn(column: string) {
+		const normalized = normalizeAssetName(column)
+		if (!normalized) return
+		if (enabledColumns.includes(normalized)) return
+		if (!availableColumnSuggestions.includes(normalized) && !customColumns.includes(normalized)) {
+			customColumns = [...customColumns, normalized]
+		}
+		enabledColumns = [...enabledColumns, normalized]
+		processingColumns = [...processingColumns, normalized]
+		await tick()
+		populateDerivedColumn(normalized)
+		processingColumns = processingColumns.filter((value) => value !== normalized)
+		customColumnDraft = ''
+		addColumnMenuOpen = false
+		toast.success(`Derived ${derivedColumnDefinitions[normalized]?.label ?? normalized}`)
+	}
+
 	// Column definitions
-	const columns: ColumnDef<Asset>[] = [
+	const baseColumns: ColumnDef<Asset>[] = [
 		{
 			id: 'select',
 			header: ({ table }) =>
@@ -185,6 +581,101 @@
 				})
 			},
 		},
+		{
+			accessorKey: 'fileType',
+			header: 'File Type',
+			cell: ({ row }) =>
+				renderComponent(Input, {
+					value: row.original.fileType,
+					class: 'w-full min-w-[140px] border-0 bg-transparent px-0 shadow-none',
+					oninput: (e: Event) =>
+						updateAsset(row.original.rowId, {
+							fileType: (e.currentTarget as HTMLInputElement).value,
+						}),
+				}),
+		},
+	]
+
+	const dynamicColumns = $derived.by<ColumnDef<Asset>[]>(() =>
+		enabledColumns.map((column) => {
+			const label = column
+				.split('_')
+				.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+				.join(' ')
+			const headerLabel = derivedColumnDefinitions[column]?.label ?? label
+
+			if (column === 'participant_id') {
+				return {
+					id: column,
+					header: processingColumns.includes(column) ? `${headerLabel}...` : headerLabel,
+					cell: ({ row }) =>
+						renderComponent(Input, {
+							value: row.original.participantId,
+							class: 'w-full min-w-[140px] border-0 bg-transparent px-0 shadow-none',
+							placeholder: 'participant',
+							oninput: (e: Event) =>
+								updateAsset(row.original.rowId, {
+									participantId: (e.currentTarget as HTMLInputElement).value,
+								}),
+						}),
+				} satisfies ColumnDef<Asset>
+			}
+
+			if (column === 'file_role') {
+				return {
+					id: column,
+					header: processingColumns.includes(column) ? `${headerLabel}...` : headerLabel,
+					cell: ({ row }) =>
+						renderComponent(Input, {
+							value: row.original.fileRole,
+							class: 'w-full min-w-[140px] border-0 bg-transparent px-0 shadow-none',
+							placeholder: 'role',
+							oninput: (e: Event) =>
+								updateAsset(row.original.rowId, {
+									fileRole: (e.currentTarget as HTMLInputElement).value,
+								}),
+						}),
+				} satisfies ColumnDef<Asset>
+			}
+
+			return {
+				id: column,
+				header: processingColumns.includes(column) ? `${headerLabel}...` : headerLabel,
+				cell: ({ row }) =>
+					renderComponent(Input, {
+						value: row.original.metadata[column] ?? '',
+						class: 'w-full min-w-[140px] border-0 bg-transparent px-0 shadow-none',
+						placeholder: label.toLowerCase(),
+						oninput: (e: Event) =>
+							updateAssetMetadata(
+								row.original.rowId,
+								column,
+								(e.currentTarget as HTMLInputElement).value,
+							),
+					}),
+			} satisfies ColumnDef<Asset>
+		}),
+	)
+
+	const addColumnAction: ColumnDef<Asset> = {
+		id: 'add-column',
+		header: () =>
+			renderComponent(Button, {
+				variant: 'ghost',
+				size: 'sm',
+				class:
+					"h-7 w-7 rounded-full p-0 text-transparent after:text-muted-foreground after:content-['+'] after:text-base after:leading-none hover:after:text-foreground",
+				'aria-label': 'Derive file columns',
+				onclick: () => {
+					addColumnMenuOpen = !addColumnMenuOpen
+				},
+			}),
+		cell: () => '',
+		enableSorting: false,
+		enableHiding: false,
+	}
+
+	const trailingColumns: ColumnDef<Asset>[] = [
 		{
 			id: 'mock',
 			header: 'Mock File',
@@ -233,11 +724,21 @@
 		},
 	]
 
+	const tableColumns = $derived.by<ColumnDef<Asset>[]>(() => [
+		...baseColumns,
+		addColumnAction,
+		...dynamicColumns,
+		...trailingColumns,
+	])
+	const assetsTableMinWidth = $derived(`${940 + enabledColumns.length * 180}px`)
+
 	const table = createSvelteTable({
 		get data() {
 			return assets
 		},
-		columns,
+		get columns() {
+			return tableColumns
+		},
 		state: {
 			get pagination() {
 				return pagination
@@ -291,16 +792,29 @@
 		await loadDataset()
 	})
 
+	function consumePendingImportPaths(): string[] {
+		try {
+			const raw = sessionStorage.getItem(PENDING_DATASET_IMPORT_KEY)
+			sessionStorage.removeItem(PENDING_DATASET_IMPORT_KEY)
+			if (!raw) return []
+			const parsed = JSON.parse(raw)
+			return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string') : []
+		} catch {
+			return []
+		}
+	}
+
 	async function buildAssets(datasetAssets: DatasetAsset[]) {
-		const loadedAssets = datasetAssets.map((a) => ({
-			rowId: crypto.randomUUID(),
-			fileId: a.private_file_id ?? null,
-			name: a.asset_key,
-			path: a.resolved_private_path || a.private_path || '',
-			exists: true,
-			mockPath: a.resolved_mock_path || a.mock_path || '',
-			mockExists: true,
-		}))
+		const loadedAssets = datasetAssets.map((a) =>
+			createAssetFromPath(a.resolved_private_path || a.private_path || '', {
+				rowId: crypto.randomUUID(),
+				fileId: a.private_file_id ?? null,
+				name: a.asset_key,
+				exists: true,
+				mockPath: a.resolved_mock_path || a.mock_path || '',
+				mockExists: true,
+			}),
+		)
 
 		// Check which files exist
 		const pathsToCheck: string[] = []
@@ -334,6 +848,29 @@
 		error = null
 
 		try {
+			if (isNewDataset) {
+				currentName = ''
+				description = ''
+				version = '1.0.0'
+				assets = []
+				originalName = ''
+				originalDescription = ''
+				originalVersion = '1.0.0'
+				isNetwork = false
+				isPublished = false
+				author = ''
+				rowSelection = {}
+				stagedRows = []
+				stagedSelection = {}
+
+				const pendingPaths = consumePendingImportPaths()
+				if (pendingPaths.length > 0) {
+					await stageImportedPaths(pendingPaths)
+					currentName = guessDatasetName(pendingPaths)
+				}
+				return
+			}
+
 			const datasets = await invoke<DatasetWithAssets[]>('list_datasets_with_assets')
 			const datasetWithAssets = datasets.find((d) => d.dataset.name === datasetName)
 
@@ -367,6 +904,11 @@
 
 	async function reloadAssets() {
 		try {
+			if (isNewDataset) {
+				rowSelection = {}
+				return
+			}
+
 			const datasets = await invoke<DatasetWithAssets[]>('list_datasets_with_assets')
 			const datasetWithAssets = datasets.find((d) => d.dataset.name === datasetName)
 
@@ -392,6 +934,7 @@
 				url?: string
 				mappings?: {
 					private?: { file_path?: string; db_file_id?: number }
+					mock?: { file_path?: string; db_file_id?: number }
 				}
 			}
 		> = {}
@@ -418,7 +961,7 @@
 				http_relay_servers: [],
 				assets: manifestAssets,
 			},
-			originalName: originalName,
+			originalName: originalName || null,
 		})
 	}
 
@@ -456,6 +999,15 @@
 		savingAssets = true
 		try {
 			await saveDataset()
+			const createdName = currentName.trim()
+			if (isNewDataset && !originalName && createdName) {
+				originalName = createdName
+				originalDescription = description
+				originalVersion = version
+				toast.success(`Added ${newAssets.length} file${newAssets.length === 1 ? '' : 's'}`)
+				goto(`/datasets/${createdName}`, { replaceState: true })
+				return
+			}
 			await reloadAssets()
 			toast.success(`Added ${newAssets.length} file${newAssets.length === 1 ? '' : 's'}`)
 		} catch (e) {
@@ -491,6 +1043,188 @@
 		}
 	}
 
+	function mergeStagedRows(rows: StagedImportRow[]) {
+		const existingPaths = new Set(stagedRows.map((row) => row.path))
+		const nextRows = rows.filter((row) => !existingPaths.has(row.path))
+		if (nextRows.length === 0) {
+			toast.info('No new files detected')
+			return
+		}
+		stagedRows = [...nextRows, ...stagedRows]
+		toast.success(`Detected ${nextRows.length} file${nextRows.length === 1 ? '' : 's'}`)
+	}
+
+	function selectAllFilteredStagedRows(checked: boolean) {
+		if (checked) {
+			stagedSelection = Object.fromEntries(filteredStagedRows.map((row) => [row.rowId, true]))
+		} else {
+			stagedSelection = {}
+		}
+	}
+
+	function updateStagedRow(rowId: string, patch: Partial<StagedImportRow>) {
+		stagedRows = stagedRows.map((row) => (row.rowId === rowId ? { ...row, ...patch } : row))
+	}
+
+	function removeStagedRow(rowId: string) {
+		stagedRows = stagedRows.filter((row) => row.rowId !== rowId)
+		const nextSelection = { ...stagedSelection }
+		delete nextSelection[rowId]
+		stagedSelection = nextSelection
+	}
+
+	function addCustomColumn() {
+		const normalized = normalizeAssetName(customColumnDraft)
+		if (!normalized) return
+		if (customColumns.includes(normalized) || enabledColumns.includes(normalized)) {
+			toast.info('Column already present')
+			customColumnDraft = ''
+			return
+		}
+		customColumns = [...customColumns, normalized]
+		enabledColumns = [...enabledColumns, normalized]
+		customColumnDraft = ''
+	}
+
+	async function stageFilePaths(paths: string[]) {
+		if (paths.length === 0) return
+		stagingBusy = true
+		try {
+			mergeStagedRows(paths.map((path) => buildStagedRow(path)))
+		} finally {
+			stagingBusy = false
+		}
+	}
+
+	async function stageImportedPaths(paths: string[]) {
+		if (paths.length === 0) return
+
+		stagingBusy = true
+		try {
+			const normalized = [...new Set(paths.map((path) => path.trim()).filter(Boolean))]
+			const directoryFlags = await Promise.all(
+				normalized.map((path) =>
+					invoke<boolean>('is_directory', { path }).catch(() => false),
+				),
+			)
+
+			const directFiles = normalized.filter((_path, index) => !directoryFlags[index])
+			const folders = normalized.filter((_path, index) => directoryFlags[index])
+			const discoveredFiles: string[] = [...directFiles]
+
+			for (const folderPath of folders) {
+				const extensionCounts = await invoke<ExtensionCount[]>('get_extensions', {
+					path: folderPath,
+				})
+				const extensions = extensionCounts
+					.map((item) => item.extension?.trim())
+					.filter((extension): extension is string => Boolean(extension))
+
+				if (extensions.length === 0) continue
+
+				const folderFiles = await invoke<string[]>('search_txt_files', {
+					path: folderPath,
+					extensions,
+				})
+				discoveredFiles.push(...folderFiles)
+			}
+
+			const uniqueFiles = [...new Set(discoveredFiles)]
+			if (uniqueFiles.length === 0) {
+				toast.error('No importable files found in the selected files or folders')
+				return
+			}
+
+			await addAssetsWithDuplicateCheck(uniqueFiles.map((path) => createAssetFromPath(path)))
+		} finally {
+			stagingBusy = false
+		}
+	}
+
+	async function stageFiles() {
+		try {
+			const { open: openDialog } = await import('@tauri-apps/plugin-dialog')
+			const selected = await openDialog({
+				multiple: true,
+				directory: false,
+				title: 'Add Files to Import Queue',
+			})
+			if (selected && Array.isArray(selected)) {
+				await stageFilePaths(selected)
+			}
+		} catch (e) {
+			console.error('Failed to open file dialog:', e)
+			error = e instanceof Error ? e.message : String(e)
+		}
+	}
+
+	async function stageFolder() {
+		try {
+			const { open: openDialog } = await import('@tauri-apps/plugin-dialog')
+			const selectedDir = await openDialog({
+				multiple: false,
+				directory: true,
+				title: 'Scan Folder for Dataset Files',
+			})
+			if (selectedDir && typeof selectedDir === 'string') {
+				const extensionCounts = await invoke<ExtensionCount[]>('get_extensions', {
+					path: selectedDir,
+				})
+				const normalized = extensionCounts.filter((ext) => ext.extension?.trim())
+				if (normalized.length === 0) {
+					toast.error('No file types found in folder')
+					return
+				}
+				stageFolderPath = selectedDir
+				pendingFolderPath = selectedDir
+				fileTypeOptions = normalized
+				selectedExtensions = new Set(normalized.map((ext) => ext.extension))
+				fileTypeDialogOpen = true
+			}
+		} catch (e) {
+			console.error('Failed to open folder dialog:', e)
+			error = e instanceof Error ? e.message : String(e)
+		}
+	}
+
+	async function commitStagedRows() {
+		if (selectedStagedRows.length === 0) {
+			toast.info('Select at least one detected row to commit')
+			return
+		}
+
+		const newAssets: Asset[] = selectedStagedRows.map((row) =>
+			createAssetFromPath(row.path, {
+				rowId: crypto.randomUUID(),
+				fileId: null,
+				name: normalizeAssetName(row.assetName) || normalizeAssetName(row.filename) || 'asset',
+				fileType: row.detectedType,
+				participantId: row.participantId,
+				fileRole: row.fileRole,
+				metadata: {},
+				exists: true,
+				mockPath: row.fileRole === 'mock' ? row.path : '',
+				mockExists: row.fileRole === 'mock',
+			}),
+		)
+
+		await addAssetsWithDuplicateCheck(newAssets)
+
+		if (postProcessEnabled) {
+			const indexCount = selectedStagedRows.filter((row) => row.fileRole === 'index').length
+			const unknownCount = selectedStagedRows.filter((row) => row.detectedType === 'Unknown').length
+			if (indexCount > 0 || unknownCount > 0) {
+				toast.info(
+					`Post-processing review: ${indexCount} index file${indexCount === 1 ? '' : 's'}, ${unknownCount} unknown row${unknownCount === 1 ? '' : 's'}.`,
+				)
+			}
+		}
+
+		const committedIds = new Set(selectedStagedRows.map((row) => row.rowId))
+		stagedRows = stagedRows.filter((row) => !committedIds.has(row.rowId))
+		stagedSelection = {}
+	}
+
 	async function addFiles() {
 		try {
 			const { open: openDialog } = await import('@tauri-apps/plugin-dialog')
@@ -500,13 +1234,7 @@
 				title: 'Add Files',
 			})
 			if (selected && Array.isArray(selected)) {
-				const newAssets = selected.map((filePath) => ({
-					rowId: crypto.randomUUID(),
-					fileId: null,
-					name: getFileName(filePath).split('.')[0] || '',
-					path: filePath,
-					exists: true,
-				}))
+				const newAssets = selected.map((filePath) => createAssetFromPath(filePath))
 				await addAssetsWithDuplicateCheck(newAssets)
 			}
 		} catch (e) {
@@ -567,6 +1295,7 @@
 	function closeFileTypeDialog() {
 		fileTypeDialogOpen = false
 		pendingFolderPath = null
+		stageFolderPath = null
 		fileTypeOptions = []
 		selectedExtensions = new Set()
 	}
@@ -591,16 +1320,15 @@
 				return
 			}
 
-			const newAssets = files.map((filePath) => ({
-				rowId: crypto.randomUUID(),
-				fileId: null,
-				name: getFileName(filePath).split('.')[0] || '',
-				path: filePath,
-				exists: true,
-			}))
+			const newAssets = files.map((filePath) => createAssetFromPath(filePath))
 
+			const stageMode = stageFolderPath === pendingFolderPath
 			closeFileTypeDialog()
-			await addAssetsWithDuplicateCheck(newAssets)
+			if (stageMode) {
+				await stageFilePaths(files)
+			} else {
+				await addAssetsWithDuplicateCheck(newAssets)
+			}
 		} catch (e) {
 			console.error('Failed to load files for selected types:', e)
 			error = e instanceof Error ? e.message : String(e)
@@ -1049,54 +1777,83 @@
 				</Card.Root>
 
 				<!-- Assets -->
-				<Card.Root>
+				<Card.Root class="shadow-none">
 					<Card.Header>
 						<div class="flex items-center justify-between">
 							<div>
-								<Card.Title class="text-base flex items-center gap-2">
-									Assets
-									{#if assets.length > 0}
-										<Badge variant="outline">{assets.length}</Badge>
-									{/if}
-									{#if missingCount > 0}
-										<Badge variant="destructive" class="gap-1">
-											<AlertTriangleIcon class="size-3" />
-											{missingCount} missing
-										</Badge>
-									{/if}
-								</Card.Title>
+								<Card.Title class="text-base">Assets</Card.Title>
 								<Card.Description>Files included in this dataset</Card.Description>
 							</div>
+							<div class="text-sm text-muted-foreground">{assets.length} assets</div>
 						</div>
 					</Card.Header>
-					<Card.Content>
+					<Card.Content class="space-y-4">
+						<div class="flex flex-wrap items-center justify-between gap-3">
+							<div class="flex items-center gap-2">
+								<Button variant="outline" data-testid="dataset-add-files" onclick={addFiles}>
+									<FileIcon class="size-4" />
+									Add Files
+								</Button>
+								<Button variant="ghost" data-testid="dataset-add-folder" onclick={addFolder}>
+									<FolderIcon class="size-4" />
+									Scan Folder
+								</Button>
+							</div>
+							{#if missingCount > 0}
+								<div class="text-sm text-destructive">{missingCount} missing</div>
+							{/if}
+						</div>
+
+						{#if addColumnMenuOpen}
+							<div class="space-y-2 border-y py-3 text-sm">
+								<div class="flex items-center justify-between gap-3">
+									<p class="text-muted-foreground">Derive columns from filenames and file relationships.</p>
+									<Button variant="ghost" size="sm" class="h-7 px-2" onclick={() => (addColumnMenuOpen = false)}>
+										Close
+									</Button>
+								</div>
+								<div class="flex flex-wrap gap-1.5">
+									{#each availableColumnSuggestions as column (column)}
+										<Button
+											variant="ghost"
+											size="sm"
+											class="h-8 px-2 text-muted-foreground hover:text-foreground"
+											title={derivedColumnDefinitions[column]?.description ?? column}
+											onclick={() => addSuggestedColumn(column)}
+										>
+											{derivedColumnDefinitions[column]?.label ?? column}
+										</Button>
+									{:else}
+										<span class="text-muted-foreground">No derived columns suggested right now.</span>
+									{/each}
+								</div>
+								<div class="flex gap-2 pt-1">
+									<Input
+										id="staged-custom-column"
+										value={customColumnDraft}
+										oninput={(e) => (customColumnDraft = e.currentTarget.value)}
+										placeholder="Custom column"
+										class="max-w-[220px] border-0 bg-transparent px-0 shadow-none"
+									/>
+									<Button variant="ghost" size="sm" class="h-8 px-2" onclick={() => addSuggestedColumn(normalizeAssetName(customColumnDraft))}>
+										Add
+									</Button>
+								</div>
+							</div>
+						{/if}
+
 						{#if assets.length === 0}
-							<div class="border-2 border-dashed rounded-lg p-8 text-center">
+							<div class="py-10 text-center">
 								<div class="flex flex-col items-center gap-2">
-									<div class="size-12 rounded-full bg-muted flex items-center justify-center">
-										<FileIcon class="size-6 text-muted-foreground" />
-									</div>
 									<div>
 										<p class="font-medium">No assets yet</p>
-										<p class="text-muted-foreground text-sm">
-											Add files or a folder to your dataset
-										</p>
-									</div>
-									<div class="flex gap-2 mt-2">
-										<Button variant="outline" data-testid="dataset-add-files" onclick={addFiles}>
-											<FileIcon class="size-4" />
-											Add Files
-										</Button>
-										<Button data-testid="dataset-add-folder" onclick={addFolder}>
-											<FolderIcon class="size-4" />
-											Add Folder
-										</Button>
+										<p class="text-muted-foreground text-sm">Scan files to start building this dataset</p>
 									</div>
 								</div>
 							</div>
 						{:else}
 							<!-- Toolbar -->
-							<div class="flex items-center justify-between gap-4 mb-4">
+							<div class="mb-3 flex items-center justify-between gap-4">
 								<div class="flex items-center gap-2 flex-1">
 									<div class="relative max-w-sm flex-1">
 										<SearchIcon
@@ -1116,21 +1873,11 @@
 										</Button>
 									{/if}
 								</div>
-								<div class="flex gap-2">
-									<Button variant="outline" data-testid="dataset-add-files" onclick={addFiles}>
-										<FileIcon class="size-4" />
-										Add Files
-									</Button>
-									<Button data-testid="dataset-add-folder" onclick={addFolder}>
-										<FolderIcon class="size-4" />
-										Add Folder
-									</Button>
-								</div>
 							</div>
 
 							<!-- Table -->
-							<div class="rounded-md border">
-								<Table.Root class="table-fixed">
+							<div class="overflow-x-auto">
+								<Table.Root class="w-max min-w-full table-fixed" style={`min-width: ${assetsTableMinWidth};`}>
 									<Table.Header>
 										{#each table.getHeaderGroups() as headerGroup (headerGroup.id)}
 											<Table.Row>
@@ -1140,8 +1887,16 @@
 															? 'w-10'
 															: header.column.id === 'fileId'
 																? 'w-20'
-																: header.column.id === 'path' || header.column.id === 'mock'
-																	? 'w-[34%]'
+																: header.column.id === 'path'
+																	? 'w-[320px]'
+																	: header.column.id === 'fileType'
+																		? 'w-[160px]'
+																		: header.column.id === 'add-column'
+																			? 'w-12'
+																			: enabledColumns.includes(header.column.id)
+																				? 'w-[180px]'
+																				: header.column.id === 'mock'
+																					? 'w-[260px]'
 																	: header.column.id === 'mockActions' || header.column.id === 'actions'
 																		? 'w-12'
 																		: ''}"
@@ -1162,9 +1917,19 @@
 											<Table.Row data-state={row.getIsSelected() && 'selected'}>
 												{#each row.getVisibleCells() as cell (cell.id)}
 													<Table.Cell
-														class="[&:has([role=checkbox])]:pl-3 {cell.column.id === 'path' || cell.column.id === 'mock'
-															? 'max-w-0 overflow-hidden'
-															: ''}"
+														class="[&:has([role=checkbox])]:pl-3 {cell.column.id === 'path'
+															? 'max-w-0 min-w-[320px] overflow-hidden'
+															: cell.column.id === 'fileType'
+																? 'min-w-[160px]'
+																: cell.column.id === 'add-column'
+																	? 'min-w-12'
+																	: enabledColumns.includes(cell.column.id)
+																		? 'min-w-[180px]'
+																		: cell.column.id === 'mock'
+																			? 'max-w-0 min-w-[260px] overflow-hidden'
+																			: cell.column.id === 'mockActions' || cell.column.id === 'actions'
+																				? 'min-w-12'
+																				: ''}"
 													>
 														<FlexRender
 															content={cell.column.columnDef.cell}
@@ -1175,7 +1940,7 @@
 											</Table.Row>
 										{:else}
 											<Table.Row>
-												<Table.Cell colspan={columns.length} class="h-24 text-center">
+												<Table.Cell colspan={tableColumns.length} class="h-24 text-center">
 													No assets found.
 												</Table.Cell>
 											</Table.Row>

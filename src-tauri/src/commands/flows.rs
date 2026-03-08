@@ -20,6 +20,7 @@ pub use biovault::flow_spec::FlowSpec;
 use biovault::flow_spec::FLOW_YAML_FILE;
 use biovault::flow_spec::{FlowFile, FlowModuleDef, FlowModuleSource, FlowStepUses};
 use biovault::module_spec::ModuleFile;
+use biovault::project_spec::MODULE_YAML_FILE;
 
 #[cfg(not(target_os = "windows"))]
 use libc;
@@ -61,8 +62,13 @@ pub(crate) fn write_flow_provenance(
     flow_dir: &Path,
     provenance: &FlowProvenance,
 ) -> Result<(), String> {
-    fs::create_dir_all(flow_dir)
-        .map_err(|e| format!("Failed to prepare flow directory {}: {}", flow_dir.display(), e))?;
+    fs::create_dir_all(flow_dir).map_err(|e| {
+        format!(
+            "Failed to prepare flow directory {}: {}",
+            flow_dir.display(),
+            e
+        )
+    })?;
     let path = flow_dir.join(FLOW_PROVENANCE_FILE);
     let raw = serde_json::to_string_pretty(provenance)
         .map_err(|e| format!("Failed to serialize flow provenance: {}", e))?;
@@ -1355,7 +1361,48 @@ fn missing_local_module_paths(source_root: &Path, flow: &FlowFile) -> Vec<String
     missing
 }
 
-fn missing_registered_module_refs(flow: &FlowFile, flow_root: &Path, db: &BioVaultDb) -> Vec<String> {
+fn has_bundled_module_ref(flow_root: &Path, module_ref: &str) -> bool {
+    let direct_bundled_module_dir = flow_root.join("modules").join(module_ref);
+    if module_yaml_exists(&direct_bundled_module_dir) {
+        return true;
+    }
+
+    let bundled_modules_root = flow_root.join("modules");
+    if !bundled_modules_root.exists() {
+        return false;
+    }
+
+    fs::read_dir(&bundled_modules_root)
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.filter_map(|entry| entry.ok()))
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir() && module_yaml_exists(path))
+        .any(|path| {
+            let module_yaml_path = path.join(MODULE_YAML_FILE);
+            let Ok(yaml) = fs::read_to_string(&module_yaml_path) else {
+                return false;
+            };
+            let Ok(module_file) = ModuleFile::parse_yaml(&yaml) else {
+                return false;
+            };
+            let Ok(module_spec) = module_file.to_module_spec() else {
+                return false;
+            };
+            module_spec.name == module_ref
+                || format!(
+                    "{}@{}",
+                    module_spec.name,
+                    module_spec.version.unwrap_or_else(|| "0.1.0".to_string())
+                ) == module_ref
+        })
+}
+
+fn missing_registered_module_refs(
+    flow: &FlowFile,
+    flow_root: &Path,
+    db: &BioVaultDb,
+) -> Vec<String> {
     let mut missing: Vec<String> = Vec::new();
     let mut seen = HashSet::new();
 
@@ -1402,6 +1449,10 @@ fn missing_registered_module_refs(flow: &FlowFile, flow_root: &Path, db: &BioVau
             continue;
         }
 
+        if has_bundled_module_ref(flow_root, &module_ref) {
+            continue;
+        }
+
         // Support module_paths-based layouts where modules are resolved at runtime
         // from a local folder instead of DB registration.
         let found_in_module_paths = flow.spec.module_paths.iter().any(|base| {
@@ -1431,6 +1482,18 @@ fn missing_registered_module_refs(flow: &FlowFile, flow_root: &Path, db: &BioVau
     }
 
     missing.sort();
+    missing
+}
+
+fn missing_flow_request_dependencies(
+    flow: &FlowFile,
+    flow_root: &Path,
+    db: &BioVaultDb,
+) -> Vec<String> {
+    let mut missing = missing_local_module_paths(flow_root, flow);
+    missing.extend(missing_registered_module_refs(flow, flow_root, db));
+    missing.sort();
+    missing.dedup();
     missing
 }
 
@@ -1483,7 +1546,8 @@ pub async fn flow_request_sync_status(
     }
 
     let flow_file = load_flow_file_from_storage(&storage, &flow_yaml)?;
-    let missing_paths = missing_local_module_paths(&source_root, &flow_file);
+    let db = BioVaultDb::new().map_err(|e| format!("Failed to open BioVault database: {}", e))?;
+    let missing_paths = missing_flow_request_dependencies(&flow_file, &source_root, &db);
     let ready = missing_paths.is_empty();
     let reason = if ready {
         None
@@ -1530,7 +1594,9 @@ fn append_flow_log(window: Option<&tauri::WebviewWindow>, log_path: &Path, messa
 }
 
 #[tauri::command]
-pub async fn get_flows(state: tauri::State<'_, AppState>) -> Result<Vec<FlowWithProvenance>, String> {
+pub async fn get_flows(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<FlowWithProvenance>, String> {
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
     let flows = biovault_db.list_flows().map_err(|e| e.to_string())?;
     drop(biovault_db);
@@ -4162,8 +4228,10 @@ pub async fn import_flow_from_request(
         return Err(format!("flow.yaml not found in {}", source_root.display()));
     }
 
-    let flow_file = load_flow_file_from_storage(&storage, &flow_yaml)?;
-    let spec = flow_file.to_flow_spec().map_err(|e| format!("Failed to parse flow spec: {}", e))?;
+    let mut flow_file = load_flow_file_from_storage(&storage, &flow_yaml)?;
+    let spec = flow_file
+        .to_flow_spec()
+        .map_err(|e| format!("Failed to parse flow spec: {}", e))?;
     let resolved_name = name
         .filter(|n| !n.trim().is_empty())
         .unwrap_or(spec.name.clone());
@@ -4190,7 +4258,12 @@ pub async fn import_flow_from_request(
             .map_err(|e| e.to_string())?
             .into_iter()
             .find(|f| f.name == resolved_name)
-            .ok_or_else(|| format!("Flow '{}' imported but not found in database", resolved_name))?;
+            .ok_or_else(|| {
+                format!(
+                    "Flow '{}' imported but not found in database",
+                    resolved_name
+                )
+            })?;
         drop(db);
 
         let provenance = FlowProvenance {
@@ -4230,14 +4303,32 @@ pub async fn import_flow_from_request(
 
     copy_flow_request_dir(&storage, &source_root, &dest_dir)?;
 
+    let bundled_modules_dir = dest_dir.join("modules");
+    let mut should_persist_flow_file = false;
+    if bundled_modules_dir.exists()
+        && !flow_file
+            .spec
+            .module_paths
+            .iter()
+            .any(|path| path.trim() == "./modules" || path.trim() == "modules")
+    {
+        flow_file.spec.module_paths.push("./modules".to_string());
+        should_persist_flow_file = true;
+    }
+    if should_persist_flow_file {
+        let dest_flow_yaml = dest_dir.join(FLOW_YAML_FILE);
+        let yaml = serde_yaml::to_string(&flow_file)
+            .map_err(|e| format!("Failed to serialize imported flow.yaml: {}", e))?;
+        fs::write(&dest_flow_yaml, yaml)
+            .map_err(|e| format!("Failed to persist imported flow.yaml: {}", e))?;
+    }
+
     // Register modules declared within the imported flow directory itself
     // (parity with create_flow/import-from-file path).
     {
         let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
         biovault::cli::commands::module_management::register_flow_modules_from_dir(
-            &dest_dir,
-            &db,
-            overwrite,
+            &dest_dir, &db, overwrite,
         )
         .map_err(|e| e.to_string())?;
     }
@@ -4359,7 +4450,7 @@ pub async fn import_flow_from_request(
 
     {
         let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
-        let missing_modules = missing_registered_module_refs(&flow_file, &dest_dir, &db);
+        let missing_modules = missing_flow_request_dependencies(&flow_file, &dest_dir, &db);
         if !missing_modules.is_empty() {
             return Err(format!(
                 "Imported flow is missing module dependencies: {}. Ask sender to bundle modules or import via Explore/dependency-aware path.",
@@ -4458,4 +4549,93 @@ pub async fn delete_run_config(
     let db = state.biovault_db.lock().map_err(|e| e.to_string())?;
     db.delete_flow_run_config(config_id)
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use biovault::project_spec::MODULE_YAML_FILE;
+    use tempfile::TempDir;
+
+    fn setup_test_db() -> (TempDir, BioVaultDb) {
+        let tmp = TempDir::new().unwrap();
+        biovault::config::set_test_biovault_home(tmp.path());
+        let db = BioVaultDb::new().unwrap();
+        (tmp, db)
+    }
+
+    fn teardown_test() {
+        biovault::config::clear_test_biovault_home();
+    }
+
+    #[test]
+    fn missing_registered_module_refs_accepts_bundled_modules_dir() {
+        let (tmp, db) = setup_test_db();
+        let flow_root = tmp.path().join("flow");
+        let bundled_module = flow_root.join("modules").join("eye-color-0.1.0");
+        fs::create_dir_all(&bundled_module).unwrap();
+        fs::write(
+            bundled_module.join(MODULE_YAML_FILE),
+            r#"apiVersion: syftbox.openmined.org/v1alpha1
+kind: Module
+metadata:
+  name: eye-color
+  version: 0.1.0
+spec:
+  runner:
+    kind: nextflow
+    entrypoint: workflow.nf
+"#,
+        )
+        .unwrap();
+
+        let flow_file = FlowFile::parse_yaml(
+            r#"apiVersion: syftbox.openmined.org/v1alpha1
+kind: Flow
+metadata:
+  name: test-flow
+  version: 0.1.0
+spec:
+  steps:
+    - id: eye_color
+      uses: eye-color
+"#,
+        )
+        .unwrap();
+
+        let missing = missing_registered_module_refs(&flow_file, &flow_root, &db);
+        assert!(
+            missing.is_empty(),
+            "unexpected missing modules: {:?}",
+            missing
+        );
+
+        teardown_test();
+    }
+
+    #[test]
+    fn missing_registered_module_refs_reports_missing_simple_name_without_bundle_or_db() {
+        let (tmp, db) = setup_test_db();
+        let flow_root = tmp.path().join("flow");
+        fs::create_dir_all(&flow_root).unwrap();
+
+        let flow_file = FlowFile::parse_yaml(
+            r#"apiVersion: syftbox.openmined.org/v1alpha1
+kind: Flow
+metadata:
+  name: test-flow
+  version: 0.1.0
+spec:
+  steps:
+    - id: eye_color
+      uses: eye-color
+"#,
+        )
+        .unwrap();
+
+        let missing = missing_registered_module_refs(&flow_file, &flow_root, &db);
+        assert_eq!(missing, vec!["eye-color".to_string()]);
+
+        teardown_test();
+    }
 }

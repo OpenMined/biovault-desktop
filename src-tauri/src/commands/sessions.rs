@@ -1080,7 +1080,10 @@ fn copy_path_into_dir(source: &Path, target_dir: &Path) -> Result<Vec<String>, S
 }
 
 #[tauri::command]
-pub fn add_files_to_session(session_id: String, file_paths: Vec<String>) -> Result<Vec<String>, String> {
+pub fn add_files_to_session(
+    session_id: String,
+    file_paths: Vec<String>,
+) -> Result<Vec<String>, String> {
     if file_paths.is_empty() {
         return Err("No files provided".to_string());
     }

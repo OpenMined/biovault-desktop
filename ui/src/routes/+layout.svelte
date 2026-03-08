@@ -4,7 +4,7 @@
 	import { invoke } from '@tauri-apps/api/core'
 	import { listen } from '@tauri-apps/api/event'
 	import { getVersion } from '@tauri-apps/api/app'
-	import { ModeWatcher, mode, setMode } from 'mode-watcher'
+	import { ModeWatcher } from 'mode-watcher'
 	import * as Sidebar from '$lib/components/ui/sidebar/index.js'
 	import * as Tooltip from '$lib/components/ui/tooltip/index.js'
 	import * as Drawer from '$lib/components/ui/drawer/index.js'
@@ -38,8 +38,6 @@
 	import BellIcon from '@lucide/svelte/icons/bell'
 	import CircleHelpIcon from '@lucide/svelte/icons/circle-help'
 	import UserPlusIcon from '@lucide/svelte/icons/user-plus'
-	import MoonIcon from '@lucide/svelte/icons/moon'
-	import SunIcon from '@lucide/svelte/icons/sun'
 
 	let { children } = $props()
 	let sqlOpen = $state(false)
@@ -68,10 +66,6 @@
 			return
 		}
 		profileSwitcherOpen = next
-	}
-
-	function toggleTheme() {
-		setMode(mode.current === 'dark' ? 'light' : 'dark')
 	}
 
 	async function copyAppVersion() {
@@ -308,22 +302,6 @@
 
 					<DependenciesStatus />
 
-					<Tooltip.Root>
-						<Tooltip.Trigger
-							class={headerIconButtonClass}
-							onclick={toggleTheme}
-						>
-							{#if mode.current === 'dark'}
-								<SunIcon class="size-5" />
-							{:else}
-								<MoonIcon class="size-5" />
-							{/if}
-						</Tooltip.Trigger>
-						<Tooltip.Content>
-							<p>{mode.current === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}</p>
-						</Tooltip.Content>
-					</Tooltip.Root>
-
 					<!--
 					<Tooltip.Root>
 						<Tooltip.Trigger
@@ -362,6 +340,7 @@
 					</Tooltip.Root>
 					-->
 
+					<!--
 					<Tooltip.Root>
 						<Tooltip.Trigger
 							class={headerIconButtonClass}
@@ -373,6 +352,7 @@
 							<p>Invite to BioVault</p>
 						</Tooltip.Content>
 					</Tooltip.Root>
+					-->
 
 					<!--
 					<Tooltip.Root>
@@ -415,11 +395,11 @@
 <NotificationsSheet bind:open={notificationsOpen} />
 <LearnSheet bind:open={learnOpen} />
 <SupportDialog bind:open={supportOpen} />
-	<InviteDialog bind:open={inviteOpen} />
-	<ProfileSwitcherDialog
-		open={profileSwitcherOpen || requiresProfileSelection}
-		required={requiresProfileSelection}
-		onOpenChange={handleProfileSwitcherOpenChange}
-	/>
+<InviteDialog bind:open={inviteOpen} />
+<ProfileSwitcherDialog
+	open={profileSwitcherOpen || requiresProfileSelection}
+	required={requiresProfileSelection}
+	onOpenChange={handleProfileSwitcherOpenChange}
+/>
 <!-- <AiAssistant /> -->
 <Toaster />

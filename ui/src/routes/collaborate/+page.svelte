@@ -402,6 +402,13 @@
 		return null
 	}
 
+	function getFlowRequestFlowVersion(msg: VaultMessage): string | null {
+		const requestMeta = getFlowRequestMeta(msg)
+		const flowVersion = requestMeta?.flow_version
+		if (typeof flowVersion === 'string' && flowVersion.trim()) return flowVersion.trim()
+		return null
+	}
+
 	function extractUrlsFromAssetsForRun(
 		assets: DatasetAssetForRun[],
 		dataType: 'mock' | 'real',
@@ -2194,132 +2201,161 @@
 								{/if}
 								{/if}
 								{#if kind === 'flow_request'}
+									{@const outgoingFlowRequest = isOutgoingMessage(typed)}
 									{@const moduleDeps = getFlowRequestModuleDependencies(typed)}
 									{@const missingModuleDeps = getMissingFlowRequestModuleDependencies(typed)}
 									{@const importedFlow = getImportedFlowForRequest(typed)}
 									{@const completedRuns = getCompletedRunsForRequest(typed)}
+									{@const flowName = getFlowRequestFlowName(typed)}
+									{@const flowVersion = getFlowRequestFlowVersion(typed)}
 									{@const datasetName = getFlowRequestDatasetName(typed)}
-									<div class="mt-2 space-y-2 rounded-md border border-border/70 bg-muted/20 p-2">
-										<div class="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-											<span class="rounded border px-1.5 py-0.5">
-												Flow: {importedFlow ? 'imported' : 'not imported'}
-											</span>
-											<span class="rounded border px-1.5 py-0.5">
-												Dependencies: {moduleDeps.length - missingModuleDeps.length}/{moduleDeps.length} installed
-											</span>
-											{#if completedRuns.length > 0}
-												<span class="rounded border px-1.5 py-0.5">
-													Runs ready: {completedRuns.length}
-												</span>
-											{/if}
-										</div>
-										{#if datasetName}
-											<p class="text-[11px] text-muted-foreground">
-												Dataset: <span class="font-medium text-foreground">{datasetName}</span>
-											</p>
-										{/if}
-										{#if moduleDeps.length > 0}
-											<div class="flex flex-wrap gap-1">
-												{#each moduleDeps as dep (dep)}
-													<Badge
-														variant="outline"
-														class={`text-[10px] ${
-															missingModuleDeps.includes(dep)
-																? 'border-amber-500/40 text-amber-700'
-																: 'border-emerald-500/40 text-emerald-700'
-														}`}
-													>
-														{dep} • {missingModuleDeps.includes(dep) ? 'missing' : 'installed'}
+									{#if outgoingFlowRequest}
+										<div class="mt-2 space-y-2 rounded-md border border-border/70 bg-muted/20 p-2">
+											<div class="flex flex-wrap items-center gap-1.5">
+												<Badge variant="outline" class="text-[10px]">FLOW REQUEST</Badge>
+												{#if flowName}
+													<Badge variant="outline" class="text-[10px]">
+														{flowName}
 													</Badge>
-												{/each}
+												{/if}
+												{#if flowVersion}
+													<Badge variant="outline" class="text-[10px]">
+														v{flowVersion}
+													</Badge>
+												{/if}
 											</div>
-										{/if}
-										<div class="flex flex-wrap items-center gap-2">
-											{#if importedFlow}
-												<Button
-													size="sm"
-													class="h-7 text-xs"
-													disabled={eventActionLoading[typed.id]}
-													onclick={() => openRequestedFlow(typed)}
-												>
-													Open Flow
-												</Button>
-											{:else}
-												<Button
-													size="sm"
-													class="h-7 text-xs"
-													disabled={eventActionLoading[typed.id]}
-													onclick={() => importFlowFromMessage(typed)}
-												>
-													Import Flow
-												</Button>
-											{/if}
-											{#if importedFlow}
-												<Button
-													size="sm"
-													variant="outline"
-													class="h-7 text-xs"
-													disabled={eventActionLoading[typed.id] || !datasetName}
-													onclick={() => runRequestedFlowFromMessage(typed, 'mock')}
-												>
-													Run Mock
-												</Button>
-												<Button
-													size="sm"
-													variant="outline"
-													class="h-7 text-xs"
-													disabled={eventActionLoading[typed.id] || !datasetName}
-													onclick={() => runRequestedFlowFromMessage(typed, 'real')}
-												>
-													Run Real
-												</Button>
-											{/if}
-											<Button
-												size="sm"
-												variant="outline"
-												class="h-7 text-xs"
-												disabled={eventActionLoading[typed.id]}
-												onclick={() => syncFlowRequestFromMessage(typed)}
-											>
-												Sync Request
-											</Button>
-											<Button
-												size="sm"
-												variant="outline"
-												class="h-7 text-xs"
-												disabled={eventActionLoading[typed.id]}
-												onclick={() => openFlowRequestFolderFromMessage(typed)}
-											>
-												Open Folder
-											</Button>
-											{#if importedFlow && completedRuns.length > 0}
-													<Select
-														class="h-7 rounded-md border bg-background px-2 text-xs"
-														value={String(selectedRunIdForMessage(typed) ?? '')}
-														onchange={(e) => {
-															const selectedValue = Number((e.currentTarget as HTMLSelectElement).value)
-															selectedRunIdByMessage = {
-															...selectedRunIdByMessage,
-															[typed.id]: selectedValue,
-														}
-													}}
-												>
-														{#each completedRuns as run (run.id)}
-															<option value={run.id}>Run #{run.id}</option>
-														{/each}
-													</Select>
-												<Button
-													size="sm"
-													variant="outline"
-													class="h-7 text-xs"
-													disabled={eventActionLoading[typed.id]}
-													onclick={() => sendResultsBackFromMessage(typed)}
-												>
-													Send Results
-												</Button>
-											{/if}
+											<p class="text-sm leading-5 text-foreground/90">
+												Please run the {flowName ?? 'requested'} flow on your private data{#if datasetName}
+													in dataset {datasetName}
+												{/if}.
+											</p>
+											<p class="text-[11px] text-muted-foreground">
+												Sent to {typed.to}
+											</p>
 										</div>
-									</div>
+									{:else}
+										<div class="mt-2 space-y-2 rounded-md border border-border/70 bg-muted/20 p-2">
+											<div class="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+												<span class="rounded border px-1.5 py-0.5">
+													Flow: {importedFlow ? 'imported' : 'not imported'}
+												</span>
+												<span class="rounded border px-1.5 py-0.5">
+													Dependencies: {moduleDeps.length - missingModuleDeps.length}/{moduleDeps.length} installed
+												</span>
+												{#if completedRuns.length > 0}
+													<span class="rounded border px-1.5 py-0.5">
+														Runs ready: {completedRuns.length}
+													</span>
+												{/if}
+											</div>
+											{#if datasetName}
+												<p class="text-[11px] text-muted-foreground">
+													Dataset: <span class="font-medium text-foreground">{datasetName}</span>
+												</p>
+											{/if}
+											{#if moduleDeps.length > 0}
+												<div class="flex flex-wrap gap-1">
+													{#each moduleDeps as dep (dep)}
+														<Badge
+															variant="outline"
+															class={`text-[10px] ${
+																missingModuleDeps.includes(dep)
+																	? 'border-amber-500/40 text-amber-700'
+																	: 'border-emerald-500/40 text-emerald-700'
+															}`}
+														>
+															{dep} • {missingModuleDeps.includes(dep) ? 'missing' : 'installed'}
+														</Badge>
+													{/each}
+												</div>
+											{/if}
+											<div class="flex flex-wrap items-center gap-2">
+												{#if importedFlow}
+													<Button
+														size="sm"
+														class="h-7 text-xs"
+														disabled={eventActionLoading[typed.id]}
+														onclick={() => openRequestedFlow(typed)}
+													>
+														Open Flow
+													</Button>
+												{:else}
+													<Button
+														size="sm"
+														class="h-7 text-xs"
+														disabled={eventActionLoading[typed.id]}
+														onclick={() => importFlowFromMessage(typed)}
+													>
+														Import Flow
+													</Button>
+												{/if}
+												{#if importedFlow}
+													<Button
+														size="sm"
+														variant="outline"
+														class="h-7 text-xs"
+														disabled={eventActionLoading[typed.id] || !datasetName}
+														onclick={() => runRequestedFlowFromMessage(typed, 'mock')}
+													>
+														Run Mock
+													</Button>
+													<Button
+														size="sm"
+														variant="outline"
+														class="h-7 text-xs"
+														disabled={eventActionLoading[typed.id] || !datasetName}
+														onclick={() => runRequestedFlowFromMessage(typed, 'real')}
+													>
+														Run Real
+													</Button>
+												{/if}
+												<Button
+													size="sm"
+													variant="outline"
+													class="h-7 text-xs"
+													disabled={eventActionLoading[typed.id]}
+													onclick={() => syncFlowRequestFromMessage(typed)}
+												>
+													Sync Request
+												</Button>
+												<Button
+													size="sm"
+													variant="outline"
+													class="h-7 text-xs"
+													disabled={eventActionLoading[typed.id]}
+													onclick={() => openFlowRequestFolderFromMessage(typed)}
+												>
+													Open Folder
+												</Button>
+												{#if importedFlow && completedRuns.length > 0}
+														<Select
+															class="h-7 rounded-md border bg-background px-2 text-xs"
+															value={String(selectedRunIdForMessage(typed) ?? '')}
+															onchange={(e) => {
+																const selectedValue = Number((e.currentTarget as HTMLSelectElement).value)
+																selectedRunIdByMessage = {
+																...selectedRunIdByMessage,
+																[typed.id]: selectedValue,
+															}
+														}}
+													>
+															{#each completedRuns as run (run.id)}
+																<option value={run.id}>Run #{run.id}</option>
+															{/each}
+														</Select>
+													<Button
+														size="sm"
+														variant="outline"
+														class="h-7 text-xs"
+														disabled={eventActionLoading[typed.id]}
+														onclick={() => sendResultsBackFromMessage(typed)}
+													>
+														Send Results
+													</Button>
+												{/if}
+											</div>
+										</div>
+									{/if}
 								{/if}
 									{#if kind === 'flow_results'}
 										<div class="mt-2 flex gap-2">

@@ -3,48 +3,45 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* BioVault Theme - Modern Neutral + Green Accent */
+/* BioVault Theme - Neutral base with green accent */
 :root {
-  --radius: 0.75rem;
+  --radius: 0.625rem;
 
-  /* Core colors - Clean neutral base */
-  --background: oklch(0.995 0 0);
-  --foreground: oklch(0.15 0.005 260);
+  /* Core colors - neutral base */
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.15 0.005 260);
+  --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.15 0.005 260);
+  --popover-foreground: oklch(0.145 0 0);
 
-  /* Primary - Emerald 500 for CTAs */
+  /* Primary - BioVault green */
   --primary: oklch(0.696 0.17 162.48);
-  --primary-foreground: oklch(0.99 0 0);
+  --primary-foreground: oklch(0.985 0 0);
 
-  /* Secondary - Neutral gray */
-  --secondary: oklch(0.96 0.003 260);
-  --secondary-foreground: oklch(0.25 0.01 260);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
 
-  /* Muted - True neutral */
-  --muted: oklch(0.955 0.003 260);
-  --muted-foreground: oklch(0.45 0.01 260);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
 
-  /* Accent - Cool blue for secondary actions */
-  --accent: oklch(0.94 0.02 230);
-  --accent-foreground: oklch(0.25 0.05 230);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
 
   /* Destructive */
-  --destructive: oklch(0.55 0.2 25);
+  --destructive: oklch(0.577 0.245 27.325);
 
-  /* Borders & inputs - Neutral */
-  --border: oklch(0.9 0.003 260);
-  --input: oklch(0.92 0.003 260);
+  /* Borders & inputs */
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
   --ring: oklch(0.696 0.17 162.48);
 
-  /* Chart colors - Green primary + blue secondary range */
-  --chart-1: oklch(0.696 0.17 162.48);
-  --chart-2: oklch(0.55 0.14 230);
-  --chart-3: oklch(0.55 0.16 145);
-  --chart-4: oklch(0.5 0.12 190);
-  --chart-5: oklch(0.48 0.1 270);
+  /* Charts */
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
 
   /* BioVault brand colors */
   --bv-green: oklch(0.696 0.17 162.48);
@@ -56,72 +53,68 @@
 
   /* Desktop app compatibility tokens */
   --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.15 0.005 260);
+  --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: var(--secondary);
-  --sidebar-accent-foreground: var(--secondary-foreground);
-  --sidebar-border: var(--border);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: var(--ring);
 }
 
 .dark {
-  /* Core colors - Dark green base */
-  --background: oklch(0.18 0.06 160);
-  --foreground: oklch(0.95 0.01 160);
-  --card: oklch(0.22 0.05 160);
-  --card-foreground: oklch(0.95 0.01 160);
-  --popover: oklch(0.22 0.05 160);
-  --popover-foreground: oklch(0.95 0.01 160);
+  --background: oklch(0.21 0.02 255);
+  --foreground: oklch(0.97 0.006 220);
+  --card: oklch(0.255 0.022 255);
+  --card-foreground: oklch(0.97 0.006 220);
+  --popover: oklch(0.29 0.02 255);
+  --popover-foreground: oklch(0.97 0.006 220);
 
-  /* Primary - Bright emerald for CTAs */
-  --primary: oklch(0.65 0.18 160);
-  --primary-foreground: oklch(0.15 0.05 160);
+  /* Keep BioVault green as primary accent */
+  --primary: oklch(0.696 0.17 162.48);
+  --primary-foreground: oklch(0.15 0.015 245);
 
-  /* Secondary - Darker green */
-  --secondary: oklch(0.25 0.05 160);
-  --secondary-foreground: oklch(0.85 0.02 160);
+  --secondary: oklch(0.31 0.02 250);
+  --secondary-foreground: oklch(0.955 0.006 220);
 
-  /* Muted - Subtle dark green */
-  --muted: oklch(0.25 0.04 160);
-  --muted-foreground: oklch(0.65 0.03 160);
+  --muted: oklch(0.285 0.018 248);
+  --muted-foreground: oklch(0.78 0.01 230);
 
-  /* Accent - Teal */
-  --accent: oklch(0.6 0.14 175);
-  --accent-foreground: oklch(0.15 0.05 175);
+  /* Slate-teal hover surface with light text */
+  --accent: oklch(0.34 0.028 220);
+  --accent-foreground: oklch(0.975 0.006 220);
 
   /* Destructive */
   --destructive: oklch(0.55 0.2 25);
 
-  /* Borders & inputs */
-  --border: oklch(0.3 0.04 160);
-  --input: oklch(0.25 0.04 160);
-  --ring: oklch(0.65 0.18 160);
+  --border: oklch(0.42 0.02 245 / 55%);
+  --input: oklch(0.33 0.018 248);
+  --ring: oklch(0.696 0.17 162.48);
 
-  /* Chart colors */
-  --chart-1: oklch(0.65 0.18 160);
-  --chart-2: oklch(0.6 0.14 175);
-  --chart-3: oklch(0.65 0.16 145);
-  --chart-4: oklch(0.55 0.12 190);
-  --chart-5: oklch(0.6 0.1 200);
+  /* Charts */
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
 
   /* BioVault brand colors */
-  --bv-green: oklch(0.65 0.18 160);
-  --bv-green-light: oklch(0.7 0.15 160);
-  --bv-teal: oklch(0.6 0.14 175);
+  --bv-green: oklch(0.696 0.17 162.48);
+  --bv-green-light: oklch(0.745 0.166 164.47);
+  --bv-teal: oklch(0.66 0.12 190);
   --bv-emerald: oklch(0.62 0.16 155);
-  --bv-mint: oklch(0.35 0.06 160);
-  --bv-forest: oklch(0.25 0.06 160);
+  --bv-mint: oklch(0.36 0.04 168);
+  --bv-forest: oklch(0.24 0.035 165);
 
   /* Desktop app compatibility tokens */
-  --sidebar: oklch(0.21 0.05 160);
-  --sidebar-foreground: var(--foreground);
-  --sidebar-primary: var(--primary);
-  --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: var(--secondary);
-  --sidebar-accent-foreground: var(--secondary-foreground);
-  --sidebar-border: var(--border);
-  --sidebar-ring: var(--ring);
+  --sidebar: oklch(0.24 0.02 252);
+  --sidebar-foreground: oklch(0.97 0.006 220);
+  --sidebar-primary: oklch(0.696 0.17 162.48);
+  --sidebar-primary-foreground: oklch(0.15 0.015 245);
+  --sidebar-accent: oklch(0.31 0.02 250);
+  --sidebar-accent-foreground: oklch(0.97 0.006 220);
+  --sidebar-border: oklch(0.42 0.02 245 / 55%);
+  --sidebar-ring: oklch(0.696 0.17 162.48);
 }
 
 @theme inline {
@@ -327,21 +320,21 @@
 
 /* Dark mode overrides (outside @layer to ensure specificity) */
 .dark .glass {
-  background: oklch(0.2 0.05 160 / 80%);
-  border: 1px solid oklch(0.4 0.06 160 / 15%);
+  background: oklch(0.24 0.02 252 / 84%);
+  border: 1px solid oklch(0.42 0.02 245 / 42%);
 }
 
 .dark .glass-green {
-  background: oklch(0.22 0.06 160 / 90%);
-  border: 1px solid oklch(0.65 0.18 160 / 15%);
+  background: linear-gradient(180deg, oklch(0.26 0.024 248 / 92%) 0%, oklch(0.28 0.045 168 / 92%) 100%);
+  border: 1px solid oklch(0.696 0.17 162.48 / 20%);
 }
 
 .dark .bg-mesh {
   background-image:
-    radial-gradient(at 0% 0%, oklch(0.25 0.08 160 / 30%) 0px, transparent 50%),
-    radial-gradient(at 100% 0%, oklch(0.22 0.06 175 / 20%) 0px, transparent 50%),
-    radial-gradient(at 100% 100%, oklch(0.25 0.08 155 / 25%) 0px, transparent 50%),
-    radial-gradient(at 0% 100%, oklch(0.22 0.06 175 / 15%) 0px, transparent 50%);
+    radial-gradient(at 0% 0%, oklch(0.3 0.08 160 / 26%) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, oklch(0.28 0.06 175 / 18%) 0px, transparent 50%),
+    radial-gradient(at 100% 100%, oklch(0.32 0.07 195 / 18%) 0px, transparent 50%),
+    radial-gradient(at 0% 100%, oklch(0.26 0.04 235 / 14%) 0px, transparent 50%);
 }
 
 .dark .desktop-wallpaper {

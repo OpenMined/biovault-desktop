@@ -15,8 +15,11 @@
 	import PackageIcon from '@lucide/svelte/icons/package'
 	import StarIcon from '@lucide/svelte/icons/star'
 	import CircleHelpIcon from '@lucide/svelte/icons/circle-help'
+	import FolderIcon from '@lucide/svelte/icons/folder'
 	import { Badge } from '$lib/components/ui/badge/index.js'
 	import { toast } from 'svelte-sonner'
+
+	const PENDING_DATASET_IMPORT_KEY = 'biovault.pendingDatasetImportPaths'
 
 	interface DatasetAsset {
 		asset_key: string
@@ -67,6 +70,7 @@
 	let unpinning = $state<string | null>(null)
 	let verifyDialogOpen = $state(false)
 	let selectedForVerify = $state<FavoritedCommunityDataset | null>(null)
+	let importDropActive = $state(false)
 
 	async function loadDatasets() {
 		try {
@@ -145,6 +149,84 @@
 	onMount(async () => {
 		await Promise.all([loadDatasets(), loadFavoritedCommunityDatasets()])
 	})
+
+	function storePendingDatasetImport(paths: string[]) {
+		sessionStorage.setItem(PENDING_DATASET_IMPORT_KEY, JSON.stringify(paths))
+	}
+
+	async function startImportedDataset(paths: string[]) {
+		const normalized = [...new Set(paths.map((path) => path.trim()).filter(Boolean))]
+		if (normalized.length === 0) {
+			toast.error('No readable file or folder paths found')
+			return
+		}
+		storePendingDatasetImport(normalized)
+		await goto('/datasets/new?source=import')
+	}
+
+	async function selectImportFiles() {
+		try {
+			const { open: openDialog } = await import('@tauri-apps/plugin-dialog')
+			const selected = await openDialog({
+				multiple: true,
+				directory: false,
+				title: 'Select Files for Dataset',
+			})
+			if (selected && Array.isArray(selected)) {
+				await startImportedDataset(selected)
+			}
+		} catch (e) {
+			toast.error('Failed to select files', {
+				description: e instanceof Error ? e.message : String(e),
+			})
+		}
+	}
+
+	async function selectImportFolder() {
+		try {
+			const { open: openDialog } = await import('@tauri-apps/plugin-dialog')
+			const selected = await openDialog({
+				multiple: false,
+				directory: true,
+				title: 'Select Folder for Dataset',
+			})
+			if (selected && typeof selected === 'string') {
+				await startImportedDataset([selected])
+			}
+		} catch (e) {
+			toast.error('Failed to select folder', {
+				description: e instanceof Error ? e.message : String(e),
+			})
+		}
+	}
+
+	function handleImportDragOver(event: DragEvent) {
+		event.preventDefault()
+		importDropActive = true
+	}
+
+	function handleImportDragLeave(event: DragEvent) {
+		event.preventDefault()
+		importDropActive = false
+	}
+
+	async function handleImportDrop(event: DragEvent) {
+		event.preventDefault()
+		importDropActive = false
+		const files = Array.from(event.dataTransfer?.files || [])
+		const paths = files
+			.map((file) => (file as File & { path?: string }).path)
+			.filter((path): path is string => typeof path === 'string' && path.trim().length > 0)
+
+		if (paths.length === 0) {
+			toast.error('Could not read dropped file or folder paths', {
+				description: 'Use Select Files or Select Folder if drag and drop is unavailable.',
+			})
+			return
+		}
+
+		await startImportedDataset(paths)
+	}
 </script>
 
 <div class="flex h-full flex-col">
@@ -173,20 +255,48 @@
 						</Empty.Media>
 						<Empty.Title>No Datasets Yet</Empty.Title>
 						<Empty.Description>
-							You haven't added any datasets yet. Get started by creating or importing your first
-							dataset.
+							Drop in files or a folder to start a dataset immediately, or browse what already exists in BioVault Explorer.
 						</Empty.Description>
 					</Empty.Header>
 					<Empty.Content>
-						<div class="flex gap-2">
-							<Button data-testid="datasets-create" onclick={() => (createDialogOpen = true)}>
-								<PlusIcon class="size-4" />
-								Create Dataset
-							</Button>
-							<Button variant="outline">
-								<UploadIcon class="size-4" />
-								Import Dataset
-							</Button>
+						<div class="mx-auto flex w-full max-w-2xl flex-col gap-4">
+							<div
+								class="bg-card rounded-xl border border-dashed p-8 text-center transition-colors {importDropActive
+									? 'border-primary bg-primary/5'
+									: 'border-border'}"
+								role="region"
+								aria-label="Dataset import dropzone"
+								ondragover={handleImportDragOver}
+								ondragleave={handleImportDragLeave}
+								ondrop={handleImportDrop}
+							>
+								<div class="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+									<UploadIcon class="size-5" />
+								</div>
+								<div class="space-y-2">
+									<h3 class="text-base font-semibold">Drop files or a folder here</h3>
+									<p class="text-muted-foreground text-sm">
+										You can drag and drop files or folders, or pick them directly to open the dataset builder with everything staged.
+									</p>
+								</div>
+								<div class="mt-5 flex flex-wrap items-center justify-center gap-2">
+									<Button data-testid="datasets-import-files" onclick={selectImportFiles}>
+										<UploadIcon class="size-4" />
+										Select Files
+									</Button>
+									<Button variant="outline" onclick={selectImportFolder}>
+										<FolderIcon class="size-4" />
+										Select Folder
+									</Button>
+								</div>
+							</div>
+
+							<div class="flex items-center justify-center">
+								<Button variant="outline" onclick={() => goto('/explore')}>
+									<DatabaseIcon class="size-4" />
+									Explore Datasets in BioVault Explorer
+								</Button>
+							</div>
 						</div>
 					</Empty.Content>
 				</Empty.Root>
@@ -285,7 +395,13 @@
 	</div>
 </div>
 
-<CreateDatasetDialog bind:open={createDialogOpen} onCreated={handleDatasetCreated} />
+<CreateDatasetDialog
+	bind:open={createDialogOpen}
+	onCreated={handleDatasetCreated}
+	onExplore={() => goto('/explore')}
+	onImportFiles={selectImportFiles}
+	onImportFolder={selectImportFolder}
+/>
 
 {#if selectedForVerify}
 	<VerifyMockDialog

@@ -40,7 +40,7 @@
 		{ title: 'Flows', url: '/flows', icon: WorkflowIcon, testId: 'nav-flows' },
 		{ title: 'Datasets', url: '/datasets', icon: DatabaseIcon, testId: 'nav-datasets' },
 		{ title: 'Messages', url: '/collaborate', icon: UsersIcon, testId: 'nav-collaborate' },
-		{ title: 'Results', url: '/runs', icon: PlayCircleIcon, testId: 'nav-results' },
+		{ title: 'Runs', url: '/runs', icon: PlayCircleIcon, testId: 'nav-runs' },
 		{ title: 'Settings', url: '/settings', icon: SettingsIcon, testId: 'nav-settings' },
 	]
 

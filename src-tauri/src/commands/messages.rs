@@ -116,17 +116,17 @@ fn classify_thread_kind(messages: &[VaultMessage], participant_count: usize) -> 
     }
 
     let has_flow = messages.iter().any(|msg| {
-        msg.metadata
-            .as_ref()
-            .is_some_and(|meta| meta.get("flow_request").is_some() || meta.get("flow_results").is_some())
+        msg.metadata.as_ref().is_some_and(|meta| {
+            meta.get("flow_request").is_some() || meta.get("flow_results").is_some()
+        })
     });
     if has_flow {
         return "flow".to_string();
     }
 
-    let has_group = messages.iter().any(|msg| {
-        extract_group_chat_participants(msg).len() >= 2
-    });
+    let has_group = messages
+        .iter()
+        .any(|msg| extract_group_chat_participants(msg).len() >= 2);
     if has_group {
         return "group".to_string();
     }
@@ -463,6 +463,50 @@ fn collect_flow_modules(
     }
 
     Ok(modules.into_iter().collect())
+}
+
+fn write_flow_request_permissions(
+    storage: &SyftBoxStorage,
+    dir: &Path,
+    recipient: &str,
+    allow_results_write: bool,
+) -> Result<(), String> {
+    storage.ensure_dir(dir).map_err(|e| {
+        format!(
+            "Failed to create permissions directory {}: {}",
+            dir.display(),
+            e
+        )
+    })?;
+
+    let mut perms = SyftPermissions::new_for_datasite(recipient);
+    if allow_results_write {
+        perms.add_rule(
+            "results/**",
+            vec![recipient.to_string()],
+            vec![recipient.to_string()],
+        );
+    }
+
+    let perms_yaml = serde_yaml::to_string(&perms)
+        .map_err(|e| format!("Failed to serialize permissions: {}", e))?;
+    let perms_path = dir.join("syft.pub.yaml");
+    storage
+        .write_with_shadow(
+            &perms_path,
+            perms_yaml.as_bytes(),
+            WritePolicy::Plaintext,
+            true,
+        )
+        .map_err(|e| {
+            format!(
+                "Failed to write permissions {}: {}",
+                perms_path.display(),
+                e
+            )
+        })?;
+
+    Ok(())
 }
 
 fn copy_results_folder_filtered(
@@ -845,7 +889,11 @@ pub fn get_thread_messages(thread_id: String) -> Result<Vec<VaultMessage>, Strin
     let anchor_signature = messages
         .iter()
         .find_map(conversation_participant_signature)
-        .or_else(|| fallback_message.as_ref().and_then(conversation_participant_signature));
+        .or_else(|| {
+            fallback_message
+                .as_ref()
+                .and_then(conversation_participant_signature)
+        });
     if let Some(anchor_signature) = anchor_signature {
         let mut merged = db
             .list_messages(None)
@@ -1618,6 +1666,7 @@ pub fn send_flow_request(
     );
 
     let submission_path = submission_root.join(&submission_folder_name);
+    write_flow_request_permissions(&storage, &submission_path, &recipient, true)?;
     copy_flow_folder(
         &storage,
         Path::new(&flow.flow_path),
@@ -1634,6 +1683,9 @@ pub fn send_flow_request(
     let modules_dest_root = submission_path.join("modules");
     let mut included_modules: Vec<String> = Vec::new();
     let mut seen_module_dirs = HashSet::new();
+    if !module_paths.is_empty() {
+        write_flow_request_permissions(&storage, &modules_dest_root, &recipient, false)?;
+    }
     for module_path in module_paths {
         let Some(module_dir_name) = module_path.file_name() else {
             continue;
@@ -1643,28 +1695,10 @@ pub fn send_flow_request(
             continue;
         }
         let dest_path = modules_dest_root.join(&module_dir_name);
+        write_flow_request_permissions(&storage, &dest_path, &recipient, false)?;
         copy_flow_folder(&storage, &module_path, &dest_path, &recipient)?;
         included_modules.push(module_dir_name);
     }
-
-    // Write permissions file for recipient access and results write-back
-    let mut perms = SyftPermissions::new_for_datasite(&recipient);
-    perms.add_rule(
-        "results/**",
-        vec![recipient.clone()],
-        vec![recipient.clone()],
-    );
-    let perms_yaml = serde_yaml::to_string(&perms)
-        .map_err(|e| format!("Failed to serialize permissions: {}", e))?;
-    let perms_path = submission_path.join("syft.pub.yaml");
-    storage
-        .write_with_shadow(
-            &perms_path,
-            perms_yaml.as_bytes(),
-            WritePolicy::Plaintext,
-            true,
-        )
-        .map_err(|e| format!("Failed to write permissions: {}", e))?;
 
     let datasite_root = config
         .get_datasite_path()
@@ -1710,26 +1744,23 @@ pub fn send_flow_request(
     participants.dedup();
     let direct_thread_id = generate_group_thread_id(&participants);
     let participants_sig = participant_signature(&participants);
-    let existing_thread_id = db
-        .list_messages(None)
-        .ok()
-        .and_then(|messages| {
-            messages
-                .into_iter()
-                .filter_map(|msg| {
-                    let msg_participants = extract_group_chat_participants(&msg);
-                    if msg_participants.len() < 2 {
-                        return None;
-                    }
-                    if participant_signature(&msg_participants) != participants_sig {
-                        return None;
-                    }
-                    let thread_id = msg.thread_id.clone().filter(|t| !t.trim().is_empty())?;
-                    Some((msg.created_at, thread_id))
-                })
-                .max_by(|(a, _), (b, _)| a.cmp(b))
-                .map(|(_, thread_id)| thread_id)
-        });
+    let existing_thread_id = db.list_messages(None).ok().and_then(|messages| {
+        messages
+            .into_iter()
+            .filter_map(|msg| {
+                let msg_participants = extract_group_chat_participants(&msg);
+                if msg_participants.len() < 2 {
+                    return None;
+                }
+                if participant_signature(&msg_participants) != participants_sig {
+                    return None;
+                }
+                let thread_id = msg.thread_id.clone().filter(|t| !t.trim().is_empty())?;
+                Some((msg.created_at, thread_id))
+            })
+            .max_by(|(a, _), (b, _)| a.cmp(b))
+            .map(|(_, thread_id)| thread_id)
+    });
 
     // Create the message with flow request metadata
     let mut msg = VaultMessage::new(config.email.clone(), recipient.clone(), message);

@@ -711,18 +711,18 @@ pub fn network_scan_datasites() -> Result<NetworkScanResult, String> {
 
                 let is_imported = chosen_local_bundle.is_some();
 
-                let (has_changed, local_fingerprint) = if let Some(path) = chosen_local_bundle.as_ref()
-                {
-                    match biovault::syftbox::sbc::parse_public_bundle_file(path) {
-                        Ok(local_info) => {
-                            let changed = local_info.fingerprint != remote_info.fingerprint;
-                            (changed, Some(local_info.fingerprint))
+                let (has_changed, local_fingerprint) =
+                    if let Some(path) = chosen_local_bundle.as_ref() {
+                        match biovault::syftbox::sbc::parse_public_bundle_file(path) {
+                            Ok(local_info) => {
+                                let changed = local_info.fingerprint != remote_info.fingerprint;
+                                (changed, Some(local_info.fingerprint))
+                            }
+                            Err(_) => (false, None),
                         }
-                        Err(_) => (false, None),
-                    }
-                } else {
-                    (false, None)
-                };
+                    } else {
+                        (false, None)
+                    };
 
                 let contact = DiscoveredContact {
                     identity: remote_info.identity,

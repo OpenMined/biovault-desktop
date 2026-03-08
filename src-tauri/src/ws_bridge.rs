@@ -3044,15 +3044,14 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 .get("overwrite")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            let result =
-                crate::commands::modules::import_flow_with_deps(
-                    state.clone(),
-                    url,
-                    name_override,
-                    overwrite,
-                )
-                    .await
-                    .map_err(|e| e.to_string())?;
+            let result = crate::commands::modules::import_flow_with_deps(
+                state.clone(),
+                url,
+                name_override,
+                overwrite,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "create_flow" | "import_flow" => {

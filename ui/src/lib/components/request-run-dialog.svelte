@@ -72,7 +72,9 @@
 				flowVersion: "1.0.0", // For now hardcoded, backend handles it
 				datasetName: datasetName,
 				recipient: authorEmail,
-				message: requestMessage.trim() || `I would like to run the ${selectedFlow.name} flow on your ${datasetName} dataset.`
+				message:
+					requestMessage.trim() ||
+					`Please run the ${selectedFlow.name} flow on your private data in dataset ${datasetName}.`
 			})
 
 			toast.success(`Request sent to ${authorEmail}`)
