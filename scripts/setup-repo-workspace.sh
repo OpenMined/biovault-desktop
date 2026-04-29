@@ -59,6 +59,9 @@ link_if_needed ../syftbox biovault/syftbox
 
 echo ""
 echo "=== syftbox-sdk submodules ==="
+if [[ -L "syftbox-sdk/syft-crypto-core" ]]; then
+    rm "syftbox-sdk/syft-crypto-core"
+fi
 link_if_needed ../syftbox-crypto syftbox-sdk/syftbox-crypto
 link_if_needed ../syftbox syftbox-sdk/syftbox
 
