@@ -53,6 +53,7 @@ templates-dev/
 /biovault-beaver/
 /sbenv/
 /bioscript/
+/syqure/
 
 # Test data (synthetic genotypes)
 test-data/
@@ -66,6 +67,7 @@ syftbox/
 syftbox-sdk/
 syftbox-crypto/
 sbenv/
+syqure/
 
 # repo tool workspace metadata
 .repo/
