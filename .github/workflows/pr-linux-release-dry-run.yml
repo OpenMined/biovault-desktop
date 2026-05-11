@@ -1,9 +1,7 @@
 name: PR Linux Release Build (Temporary)
 
 on:
-  pull_request:
-    branches:
-      - main
+  workflow_dispatch:
 
 concurrency:
   group: pr-linux-release-${{ github.event.pull_request.number || github.ref_name }}
