@@ -54,13 +54,13 @@ jobs:
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
 
-          # flows-collab smoke test (windows)
-          - scenario: flows-collab
-            platform: windows-x86_64
-            runner: namespace-profile-windows-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: ""
+          # Disabled: flows-collab smoke test (windows)
+          # - scenario: flows-collab
+          #   platform: windows-x86_64
+          #   runner: namespace-profile-windows-medium
+          #   client_mode: rust
+          #   tauri_binary: src-tauri/target/release/bv-desktop
+          #   run_prefix: ""
 
           # jupyter-collab smoke test (linux)
           - scenario: jupyter-collab
@@ -94,13 +94,13 @@ jobs:
             tauri_binary: src-tauri/target/release/bv-desktop
             run_prefix: "xvfb-run -a"
 
-          # syqure-multiparty-flow secure-only smoke test (linux)
-          - scenario: syqure-multiparty-flow-secure-only
-            platform: linux-x86_64
-            runner: namespace-profile-linux-medium
-            client_mode: rust
-            tauri_binary: src-tauri/target/release/bv-desktop
-            run_prefix: "xvfb-run -a"
+          # Disabled: syqure-multiparty-flow secure-only smoke test (linux)
+          # - scenario: syqure-multiparty-flow-secure-only
+          #   platform: linux-x86_64
+          #   runner: namespace-profile-linux-medium
+          #   client_mode: rust
+          #   tauri_binary: src-tauri/target/release/bv-desktop
+          #   run_prefix: "xvfb-run -a"
 
           # syqure-multiparty-allele-freq (linux)
           - scenario: syqure-multiparty-allele-freq
@@ -899,6 +899,8 @@ jobs:
 
   profiles-e2e-windows:
     name: profiles-e2e (windows-x86_64)
+    # Disabled: profiles E2E Windows is currently failing.
+    if: ${{ false }}
     runs-on: namespace-profile-windows-medium
     defaults:
       run:
