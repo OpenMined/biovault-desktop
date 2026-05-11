@@ -1660,10 +1660,11 @@ test.describe.only('Flows Collaboration @flows-collab', () => {
 			log(logSocket, { event: 'step-3', action: 'import-flow' })
 			console.log('\n=== Step 3: Client2 imports HERC2 Flow ===')
 
-			// Import HERC2 from local bioscript examples (faster than GitHub)
+			// Import HERC2 from the tracked legacy bioscript example (faster than GitHub).
 			const herc2LocalPath = path.join(
 				process.cwd(),
 				'bioscript',
+				'old',
 				'examples',
 				'herc2',
 				'herc2-classifier',

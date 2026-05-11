@@ -330,17 +330,17 @@ resolve_manifest_url() {
     return
   fi
 
-  if git -C "$ROOT_DIR" cat-file -e "HEAD:$MANIFEST_FILE" 2>/dev/null; then
-    MANIFEST_BRANCH_DEFAULT="$(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"
-    echo "file://$ROOT_DIR"
-    return
-  fi
-
   if [[ ! -f "$MANIFEST_FILE" ]]; then
+    if git -C "$ROOT_DIR" cat-file -e "HEAD:$MANIFEST_FILE" 2>/dev/null; then
+      MANIFEST_BRANCH_DEFAULT="$(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"
+      echo "file://$ROOT_DIR"
+      return
+    fi
     echo "Manifest not found: $MANIFEST_FILE" >&2
     exit 1
   fi
 
+  # Snapshot the working-tree manifest so repo init honors local manifest edits.
   mkdir -p "$MANIFEST_REPO_DIR"
   if [[ ! -d "$MANIFEST_REPO_DIR/.git" ]]; then
     git -C "$MANIFEST_REPO_DIR" init >/dev/null 2>&1
@@ -372,6 +372,10 @@ repo_depth_arg() {
 }
 
 ensure_syqure_manifest_override() {
+  if grep -q 'path="syqure"' "$MANIFEST_FILE" 2>/dev/null; then
+    return 0
+  fi
+
   if run_repo manifest -r 2>/dev/null | grep -q 'path="syqure"'; then
     return 0
   fi

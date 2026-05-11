@@ -89,6 +89,14 @@ case "$(uname -s)" in
     if [[ -f syqure/target/debug/syqure ]]; then
       cp syqure/target/debug/syqure src-tauri/resources/syqure/syqure
       chmod +x src-tauri/resources/syqure/syqure
+      rm -rf src-tauri/resources/syqure/lib
+      if [[ -d syqure/target/debug/lib/codon ]]; then
+        mkdir -p src-tauri/resources/syqure/lib
+        cp -R syqure/target/debug/lib/codon src-tauri/resources/syqure/lib/
+      else
+        echo "❌ syqure runtime libs not found at syqure/target/debug/lib/codon" >&2
+        exit 1
+      fi
     else
       echo "❌ syqure binary not found at syqure/target/debug/syqure" >&2
       exit 1
