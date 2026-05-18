@@ -3,6 +3,7 @@ use biovault::defaults::SYFTBOX_DEFAULT_SERVER_URL;
 use biovault::messages::MessageRpcWatcherHandle;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
@@ -154,6 +155,8 @@ pub struct FileRecord {
     pub chromosome_count: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inferred_sex: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub facets: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

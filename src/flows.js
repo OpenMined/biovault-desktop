@@ -1705,6 +1705,54 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 		return flowAcceptsShape(flow, 'List[GenotypeRecord]')
 	}
 
+	function getFlowRequiredFacets(flow, shape = 'List[GenotypeRecord]') {
+		const required = new Set()
+		const spec = flow?.spec || {}
+		const topLevel = spec.required_facets || spec.requiredFacets || []
+		if (Array.isArray(topLevel)) {
+			topLevel.forEach((facet) => {
+				const trimmed = String(facet || '').trim()
+				if (trimmed) required.add(trimmed)
+			})
+		}
+
+		Object.values(spec.inputs || {}).forEach((inputSpec) => {
+			const typeStr = describeInputType(inputSpec)
+			if (!typesCompatible(shape || 'List[GenotypeRecord]', typeStr)) return
+			const inputRequired = inputSpec?.required_facets || inputSpec?.requiredFacets || []
+			if (Array.isArray(inputRequired)) {
+				inputRequired.forEach((facet) => {
+					const trimmed = String(facet || '').trim()
+					if (trimmed) required.add(trimmed)
+				})
+			}
+		})
+
+		return Array.from(required).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+	}
+
+	function validateRequiredFacetsForFiles(flow, context, selectedFiles) {
+		const requiredFacets = getFlowRequiredFacets(flow, context?.datasetShape || 'List[GenotypeRecord]')
+		if (requiredFacets.length === 0) {
+			return { requiredFacets, missing: [] }
+		}
+
+		const selectedIds = new Set((context?.fileIds || []).map((id) => Number(id)))
+		const files = selectedFiles.filter((file) => selectedIds.has(Number(file.id)))
+		const missing = []
+		files.forEach((file) => {
+			const participantId = file.participant_id || file.participant_name || `File #${file.id}`
+			requiredFacets.forEach((facet) => {
+				const value = file.facets?.[facet]
+				if (value == null || String(value).trim() === '') {
+					missing.push({ participantId, facet })
+				}
+			})
+		})
+
+		return { requiredFacets, missing }
+	}
+
 	function logFlowDebug(label, flows) {
 		if (!flows || flows.length === 0) {
 			console.log(`[Flows Debug] ${label}: no flows`)
@@ -1777,6 +1825,19 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			runsBaseDir = await invoke('get_runs_base_dir')
 		} catch (error) {
 			console.warn('Failed to get runs base directory:', error)
+		}
+
+		let selectedFilesForFacetValidation = []
+		if (context?.fileIds && context.fileIds.length > 0) {
+			try {
+				const files = await invoke('get_files')
+				const selectedIds = new Set(context.fileIds.map((id) => Number(id)))
+				selectedFilesForFacetValidation = Array.isArray(files)
+					? files.filter((file) => selectedIds.has(Number(file.id)))
+					: []
+			} catch (error) {
+				console.warn('Failed to load files for required facet validation:', error)
+			}
 		}
 
 		const selectionShape = context?.datasetShape || 'List[GenotypeRecord]'
@@ -1985,6 +2046,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 						<div class="data-run-flow-list" style="display: flex; flex-direction: column; gap: 12px; max-height: 320px; overflow-y: auto; padding-right: 4px;">
 							${flowOptionsHtml}
 						</div>
+						<div id="data-run-facet-validation" style="display: none; margin-top: 14px; border: 1px solid #fecaca; background: #fef2f2; color: #7f1d1d; border-radius: 10px; padding: 14px 16px; font-size: 13px; line-height: 1.5;"></div>
 					</div>
 					<div class="data-run-section" style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px 24px;">
 						<h3 style="margin: 0 0 12px 0; font-size: 14px; font-weight: 700; color: #475569; letter-spacing: -0.01em; display: flex; align-items: center; gap: 8px;">
@@ -2095,6 +2157,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 				label.classList.add('selected')
 				radio.checked = true
 				refreshOptionStyles()
+				updateRequiredFacetValidation()
 			}
 
 			label.addEventListener('click', (event) => {
@@ -2170,7 +2233,80 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 		})
 
 		const runBtn = modal.querySelector('#data-run-run-btn')
+		const footerStatus = modal.querySelector('.data-run-footer-status')
+		const facetValidationBox = modal.querySelector('#data-run-facet-validation')
+		function getSelectedFlow() {
+			const selectedRadio = modal.querySelector('input[name="data-run-flow"]:checked')
+			const flowId = selectedRadio ? parseInt(selectedRadio.value, 10) : NaN
+			return Number.isFinite(flowId) ? flows.find((flow) => flow.id === flowId) : null
+		}
+
+		function updateRequiredFacetValidation() {
+			const flow = getSelectedFlow()
+			const validation = validateRequiredFacetsForFiles(
+				flow,
+				context,
+				selectedFilesForFacetValidation,
+			)
+			const hasMissing = validation.missing.length > 0
+			if (facetValidationBox) {
+				if (hasMissing) {
+					const missingItems = validation.missing
+						.slice(0, 16)
+						.map(
+							(item) =>
+								`<li><strong>${escapeHtml(item.participantId)}</strong> missing ${escapeHtml(item.facet)}</li>`,
+						)
+						.join('')
+					const extra =
+						validation.missing.length > 16
+							? `<li>${validation.missing.length - 16} more missing facet value${
+									validation.missing.length - 16 === 1 ? '' : 's'
+								}</li>`
+							: ''
+					const requiredText = validation.requiredFacets.map(escapeHtml).join(', ')
+					const editButton =
+						context?.fileIds && context.fileIds.length > 0
+							? `<button type="button" id="data-run-edit-required-facets" class="btn-secondary" style="margin-top: 10px; padding: 8px 12px; border-radius: 6px; font-weight: 700;">Edit Facets</button>`
+							: ''
+					facetValidationBox.innerHTML = `
+						<div style="font-weight: 700; margin-bottom: 6px;">This flow requires facet${validation.requiredFacets.length === 1 ? '' : 's'}: ${requiredText}</div>
+						<ul style="margin: 0; padding-left: 18px;">${missingItems}${extra}</ul>
+						${editButton}
+					`
+					facetValidationBox.style.display = 'block'
+					facetValidationBox
+						.querySelector('#data-run-edit-required-facets')
+						?.addEventListener('click', () => {
+							closeDataRunModal(false)
+							if (typeof window.openFacetsForFileIds === 'function') {
+								void window.openFacetsForFileIds(context.fileIds || [])
+							} else if (typeof navigateTo === 'function') {
+								navigateTo('data')
+							}
+						})
+				} else {
+					facetValidationBox.innerHTML = ''
+					facetValidationBox.style.display = 'none'
+				}
+			}
+
+			if (runBtn) {
+				runBtn.disabled = hasMissing
+				runBtn.style.opacity = hasMissing ? '0.55' : '1'
+				runBtn.style.cursor = hasMissing ? 'not-allowed' : 'pointer'
+			}
+			if (footerStatus) {
+				footerStatus.textContent = hasMissing
+					? 'Add required facets before running'
+					: 'Ready to run'
+				footerStatus.style.color = hasMissing ? '#b91c1c' : '#64748b'
+			}
+		}
+		updateRequiredFacetValidation()
 		runBtn.addEventListener('click', async () => {
+			updateRequiredFacetValidation()
+			if (runBtn.disabled) return
 			const selectedRadio = modal.querySelector('input[name="data-run-flow"]:checked')
 			if (!selectedRadio) {
 				alert('Please select a flow to run.')
