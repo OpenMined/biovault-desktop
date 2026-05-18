@@ -117,7 +117,12 @@ fn validate_required_facets(
     if missing.is_empty() {
         Ok(())
     } else {
-        let preview = missing.iter().take(12).cloned().collect::<Vec<_>>().join(", ");
+        let preview = missing
+            .iter()
+            .take(12)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
         let suffix = if missing.len() > 12 {
             format!(" and {} more", missing.len() - 12)
         } else {
@@ -2360,8 +2365,8 @@ pub async fn run_flow_impl(
                 .collect();
             let facets_by_participant =
                 facets_for_participant_ids(&biovault_db, &row_participant_ids).unwrap_or_default();
-            let flow_spec =
-                FlowSpec::load(&yaml_path).map_err(|e| format!("Failed to load flow spec: {}", e))?;
+            let flow_spec = FlowSpec::load(&yaml_path)
+                .map_err(|e| format!("Failed to load flow spec: {}", e))?;
             let required_facets = required_facets_for_genotype_selection(&flow_spec);
             validate_required_facets(
                 &required_facets,
@@ -2493,8 +2498,8 @@ pub async fn run_flow_impl(
             let facets_by_participant =
                 facets_for_participant_ids(&biovault_db, &record_participant_ids)
                     .unwrap_or_default();
-            let flow_spec =
-                FlowSpec::load(&yaml_path).map_err(|e| format!("Failed to load flow spec: {}", e))?;
+            let flow_spec = FlowSpec::load(&yaml_path)
+                .map_err(|e| format!("Failed to load flow spec: {}", e))?;
             let required_facets = required_facets_for_genotype_selection(&flow_spec);
             validate_required_facets(
                 &required_facets,

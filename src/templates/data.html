@@ -337,7 +337,12 @@
 								<span class="file-type-filter-count" data-file-type-count="other">0</span>
 							</button>
 						</div>
-						<button id="facets-import-btn" class="btn-secondary" type="button" title="Import participant facets">
+						<button
+							id="facets-import-btn"
+							class="btn-secondary"
+							type="button"
+							title="Import participant facets"
+						>
 							Facets
 						</button>
 					</div>
@@ -1027,7 +1032,10 @@
 
 		<div id="facets-modal" class="modal hidden">
 			<div class="modal-overlay"></div>
-			<div class="modal-content" style="max-width: 980px; width: min(980px, 94vw); max-height: 86vh">
+			<div
+				class="modal-content"
+				style="max-width: 980px; width: min(980px, 94vw); max-height: 86vh"
+			>
 				<div class="modal-header">
 					<h3>Participant Facets</h3>
 					<button id="facets-close" class="btn-icon" aria-label="Close">
@@ -1045,7 +1053,14 @@
 					<div id="facets-preview-summary" style="font-size: 13px; color: var(--text-secondary)">
 						Load a sheet with participant_id plus facet columns, or participant_id, facet, value.
 					</div>
-					<div style="display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 14px; min-height: 420px">
+					<div
+						style="
+							display: grid;
+							grid-template-columns: minmax(0, 1fr) 300px;
+							gap: 14px;
+							min-height: 420px;
+						"
+					>
 						<div class="files-table-wrapper" style="max-height: 520px; overflow: auto">
 							<table class="files-table">
 								<thead>
@@ -1061,13 +1076,24 @@
 						</div>
 						<div
 							id="facets-unique-values"
-							style="display: none; max-height: 520px; overflow: auto; padding: 12px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-secondary); font-size: 13px"
+							style="
+								display: none;
+								max-height: 520px;
+								overflow: auto;
+								padding: 12px;
+								border: 1px solid var(--border-color);
+								border-radius: 6px;
+								background: var(--bg-secondary);
+								font-size: 13px;
+							"
 						></div>
 					</div>
 				</div>
 				<div class="modal-footer">
 					<button id="facets-cancel" class="btn-secondary" type="button">Cancel</button>
-					<button id="facets-confirm" class="btn-primary" type="button" disabled>Import Facets</button>
+					<button id="facets-confirm" class="btn-primary" type="button" disabled>
+						Import Facets
+					</button>
 				</div>
 			</div>
 		</div>

@@ -3706,7 +3706,9 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		})
 		renderFacetPreview()
 		const index = facetPreviewRows.length - 1
-		const input = document.querySelector(`.facet-edit[data-index="${index}"][data-field="facet_name"]`)
+		const input = document.querySelector(
+			`.facet-edit[data-index="${index}"][data-field="facet_name"]`,
+		)
 		input?.focus()
 	}
 
@@ -3801,7 +3803,9 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			diagnostics.unknownParticipants.length > 0 || diagnostics.duplicateKeys.length > 0
 
 		if (summary) {
-			const source = facetPreviewSourceFile ? ` from ${getPathBasename(facetPreviewSourceFile)}` : ''
+			const source = facetPreviewSourceFile
+				? ` from ${getPathBasename(facetPreviewSourceFile)}`
+				: ''
 			summary.textContent = `${validRows.length} facet value${validRows.length === 1 ? '' : 's'}${source}.`
 		}
 

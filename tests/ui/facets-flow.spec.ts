@@ -86,21 +86,21 @@ test.describe('Participant facets flow @facets-flow', () => {
 						},
 					])
 
-					const state = {
-						storageKey,
-						folderPath: testData.folderPath,
-						facetFile: testData.facetFile,
-						files: cloneFiles(),
-						importedFiles: [] as any[],
-						participants: [] as any[],
-						availableFacetRows: cloneFacetRows(),
-						facetRows: [] as any[],
-						nextFileId: 1,
-						nextParticipantId: 1,
-						lastRun: null as any,
-						savedSamplePath: null as string | null,
-						savedSampleParticipantIds: [] as string[],
-					}
+				const state = {
+					storageKey,
+					folderPath: testData.folderPath,
+					facetFile: testData.facetFile,
+					files: cloneFiles(),
+					importedFiles: [] as any[],
+					participants: [] as any[],
+					availableFacetRows: cloneFacetRows(),
+					facetRows: [] as any[],
+					nextFileId: 1,
+					nextParticipantId: 1,
+					lastRun: null as any,
+					savedSamplePath: null as string | null,
+					savedSampleParticipantIds: [] as string[],
+				}
 
 				const participantRowId = (participantId: string) => {
 					let participant = state.participants.find((p) => p.participant_id === participantId)
@@ -241,23 +241,23 @@ test.describe('Participant facets flow @facets-flow', () => {
 								state.nextFileId += 1
 							})
 							return { success: true, conflicts: [], errors: [] }
-							}
+						}
 						case 'preview_participant_facets': {
-								const uniqueValues: Record<string, string[]> = {}
-								for (const row of state.availableFacetRows) {
-									uniqueValues[row.facet_name] = uniqueValues[row.facet_name] || []
-									if (!uniqueValues[row.facet_name].includes(row.facet_value)) {
-										uniqueValues[row.facet_name].push(row.facet_value)
-									}
-								}
-								Object.values(uniqueValues).forEach((values) => values.sort())
-								return {
-									rows: state.availableFacetRows.map((row) => ({ ...row })),
-									unique_values: uniqueValues,
-									unknown_participant_ids: [],
-									duplicate_keys: [],
+							const uniqueValues: Record<string, string[]> = {}
+							for (const row of state.availableFacetRows) {
+								uniqueValues[row.facet_name] = uniqueValues[row.facet_name] || []
+								if (!uniqueValues[row.facet_name].includes(row.facet_value)) {
+									uniqueValues[row.facet_name].push(row.facet_value)
 								}
 							}
+							Object.values(uniqueValues).forEach((values) => values.sort())
+							return {
+								rows: state.availableFacetRows.map((row) => ({ ...row })),
+								unique_values: uniqueValues,
+								unknown_participant_ids: [],
+								duplicate_keys: [],
+							}
+						}
 						case 'import_participant_facets':
 							for (const row of args.rows || []) {
 								const existingIndex = state.facetRows.findIndex(
@@ -305,7 +305,8 @@ test.describe('Participant facets flow @facets-flow', () => {
 								genotype_file: file.file_path,
 								...facetsFor(file.participant_id),
 							}))
-							const aggregation: Record<string, { participants: number; variant_count: number }> = {}
+							const aggregation: Record<string, { participants: number; variant_count: number }> =
+								{}
 							for (const file of selectedFiles) {
 								const split = facetsFor(file.participant_id).split || 'unknown'
 								aggregation[split] = aggregation[split] || {

@@ -1728,11 +1728,16 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			}
 		})
 
-		return Array.from(required).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+		return Array.from(required).sort((a, b) =>
+			a.localeCompare(b, undefined, { sensitivity: 'base' }),
+		)
 	}
 
 	function validateRequiredFacetsForFiles(flow, context, selectedFiles) {
-		const requiredFacets = getFlowRequiredFacets(flow, context?.datasetShape || 'List[GenotypeRecord]')
+		const requiredFacets = getFlowRequiredFacets(
+			flow,
+			context?.datasetShape || 'List[GenotypeRecord]',
+		)
 		if (requiredFacets.length === 0) {
 			return { requiredFacets, missing: [] }
 		}
