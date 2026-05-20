@@ -469,6 +469,9 @@ const mockDialog = {
 		return null
 	},
 	save: async (options) => {
+		if (typeof window !== 'undefined' && typeof window.__TEST_DIALOG_SAVE__ === 'function') {
+			return window.__TEST_DIALOG_SAVE__(options)
+		}
 		console.log('[Mock] dialog.save:', options)
 		return options?.defaultPath || 'mock-query-results.csv'
 	},

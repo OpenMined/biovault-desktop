@@ -29,6 +29,7 @@ pub struct GenotypeMetadata {
 // Sub-modules
 pub mod analyze;
 pub mod crud;
+pub mod facets;
 pub mod import;
 pub mod queue;
 pub mod reference_data;
@@ -38,6 +39,7 @@ pub mod scan;
 // Re-export all commands for convenience
 pub use analyze::*;
 pub use crud::*;
+pub use facets::*;
 pub use import::*;
 pub use queue::*;
 pub use reference_data::*;

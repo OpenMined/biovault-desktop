@@ -12,6 +12,15 @@ function buildDatasetAssetSyftUrl(ownerEmail, datasetName, filePath) {
 	return `syft://${ownerEmail}/public/biovault/datasets/${datasetName}/assets/${fileName}`
 }
 
+function escapeHtml(value) {
+	return String(value ?? '')
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;')
+		.replace(/'/g, '&#039;')
+}
+
 export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	const FILE_STATUS_PRIORITY = { pending: 0, processing: 1, error: 2, complete: 3 }
 	const FILE_TYPE_FILTER_KEYS = ['genotype', 'vcf', 'raw', 'other']
@@ -27,6 +36,11 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	let fileSearchTerm = ''
 	let sortField = 'status'
 	let sortDirection = 'asc'
+	let facetColumnNames = []
+	let facetPreviewRows = []
+	let facetPreviewSourceFile = null
+	let facetPreviewMode = 'import'
+	let facetPreviewDefaultParticipantId = ''
 	let _queueProcessorRunning = false
 	let queueIntervalId = null
 	let existingFilePaths = new Set()
@@ -562,6 +576,10 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			case 'created_at':
 				return file.created_at ? Date.parse(file.created_at) : null
 			default:
+				if (field?.startsWith('facet:')) {
+					const facetName = field.slice('facet:'.length)
+					return (file.facets?.[facetName] || '').toLowerCase()
+				}
 				return (file[field] || '').toString().toLowerCase()
 		}
 	}
@@ -629,6 +647,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			file.grch_version,
 			file.participant_id,
 			file.inferred_sex,
+			...Object.values(file.facets || {}),
 		]
 		const matchesFile = fileValues.some((v) => v && v.toString().toLowerCase().includes(term))
 
@@ -812,6 +831,39 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		</td>`
 	}
 
+	function updateFacetColumns() {
+		const names = new Set()
+		allFiles.forEach((file) => {
+			Object.keys(file.facets || {}).forEach((name) => names.add(name))
+		})
+		facetColumnNames = Array.from(names).sort((a, b) =>
+			a.localeCompare(b, undefined, { sensitivity: 'base' }),
+		)
+
+		const headerRow = document.querySelector('.files-table thead tr')
+		if (!headerRow) return
+		headerRow.querySelectorAll('.facet-header').forEach((node) => node.remove())
+
+		const actionsHeader = headerRow.querySelector('.col-actions')
+		facetColumnNames.forEach((name) => {
+			const th = document.createElement('th')
+			th.className = 'facet-header sortable-header'
+			th.dataset.sortField = `facet:${name}`
+			th.innerHTML = `${escapeHtml(name)} <span class="sort-indicator"></span>`
+			th.addEventListener('click', () => {
+				const field = th.dataset.sortField
+				if (sortField === field) {
+					sortDirection = sortDirection === 'asc' ? 'desc' : 'asc'
+				} else {
+					sortField = field
+					sortDirection = 'asc'
+				}
+				renderFilesPanel()
+			})
+			headerRow.insertBefore(th, actionsHeader)
+		})
+	}
+
 	function renderFileRow(file) {
 		const row = document.createElement('tr')
 		row.className = 'file-row'
@@ -827,6 +879,9 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			: '<span style="color: #9ca3af; font-style: italic;">Unassigned</span>'
 
 		const referenceCell = renderReferenceCell(file)
+		const facetCells = facetColumnNames
+			.map((name) => `<td class="facet-cell">${escapeHtml(file.facets?.[name] || '-')}</td>`)
+			.join('')
 
 		row.innerHTML = `
 			<td class="checkbox-cell">
@@ -867,7 +922,11 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 						? 'Unknown'
 						: '-'
 			}</td>
+			${facetCells}
 			<td class="actions-cell">
+				<button class="btn-icon edit-facets-btn" data-file-id="${file.id}" title="Edit facets">
+					<img src="assets/icons/pencil.svg" width="16" height="16" alt="" />
+				</button>
 				<button class="btn-icon open-finder-btn" data-path="${file.file_path}" title="Show in folder">
 					<img src="assets/icons/folder.svg" width="16" height="16" alt="" />
 				</button>
@@ -924,6 +983,11 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			} catch (error) {
 				alert(`Error opening folder: ${error}`)
 			}
+		})
+
+		row.querySelector('.edit-facets-btn')?.addEventListener('click', (e) => {
+			e.stopPropagation()
+			openFacetRecordEditor(Number(e.currentTarget.dataset.fileId))
 		})
 
 		// Participant link - click to search/filter by participant
@@ -1036,6 +1100,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		if (!tbody) return
 
 		tbody.innerHTML = ''
+		updateFacetColumns()
 
 		const searchableFiles = getFilteredNonReferenceFiles().filter(matchesFileSearch)
 		updateFileTypeFilterUI(searchableFiles)
@@ -3485,6 +3550,364 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		}
 	}
 
+	function buildFacetPreviewRowsForFiles(files, includeBlankRow = false) {
+		const participantIds = [...new Set(files.map((file) => file.participant_id).filter(Boolean))]
+		if (participantIds.length === 0) return []
+
+		const facetNames = new Set(facetColumnNames)
+		files.forEach((file) => {
+			Object.keys(file.facets || {}).forEach((name) => facetNames.add(name))
+		})
+
+		const sortedFacetNames = Array.from(facetNames).sort((a, b) =>
+			a.localeCompare(b, undefined, { sensitivity: 'base' }),
+		)
+		if (sortedFacetNames.length === 0 && includeBlankRow) {
+			return participantIds.map((participantId) => ({
+				participant_id: participantId,
+				facet_name: '',
+				facet_value: '',
+			}))
+		}
+
+		const rows = []
+		participantIds.forEach((participantId) => {
+			const file = files.find((candidate) => candidate.participant_id === participantId)
+			sortedFacetNames.forEach((facetName) => {
+				rows.push({
+					participant_id: participantId,
+					facet_name: facetName,
+					facet_value: file?.facets?.[facetName] || '',
+				})
+			})
+		})
+		return rows
+	}
+
+	function openFacetRecordEditor(fileId) {
+		const file = allFiles.find((candidate) => candidate.id === fileId)
+		if (!file?.participant_id) {
+			void dialog.message('This file does not have a participant_id to attach facets to.', {
+				title: 'Edit Facets',
+				type: 'error',
+			})
+			return
+		}
+
+		facetPreviewDefaultParticipantId = file.participant_id
+		setFacetPreviewRows(buildFacetPreviewRowsForFiles([file], true), null, 'edit')
+		document.getElementById('facets-modal')?.classList.remove('hidden')
+		renderFacetPreview()
+	}
+
+	function openFacetsModal() {
+		const modal = document.getElementById('facets-modal')
+		if (!modal) return
+		const selectedFiles = allFiles.filter((file) => selectedFileIds.includes(file.id))
+		const participantIds = [
+			...new Set(selectedFiles.map((file) => file.participant_id).filter(Boolean)),
+		]
+		if (participantIds.length > 0) {
+			const rows = buildFacetPreviewRowsForFiles(selectedFiles, false)
+			facetPreviewDefaultParticipantId = participantIds[0] || ''
+			if (rows.length > 0) {
+				setFacetPreviewRows(rows, null, 'edit')
+			} else if (facetPreviewRows.length === 0) {
+				facetPreviewMode = 'import'
+				facetPreviewDefaultParticipantId = ''
+			}
+		}
+		modal.classList.remove('hidden')
+		renderFacetPreview()
+	}
+
+	function closeFacetsModal() {
+		const modal = document.getElementById('facets-modal')
+		if (modal) modal.classList.add('hidden')
+		facetPreviewDefaultParticipantId = ''
+	}
+
+	async function openFacetsForFileIds(fileIds = []) {
+		const ids = Array.isArray(fileIds)
+			? fileIds.map((id) => Number(id)).filter((id) => Number.isFinite(id))
+			: []
+		if (ids.length === 0) return
+		if (allFiles.length === 0) {
+			await loadData()
+		}
+		selectedFileIds = [...new Set(ids)]
+		syncSelectionToSessionStorage()
+		updateDeleteButton()
+		updateSelectAllCheckbox()
+		updateActionButtons()
+		if (typeof window.navigateTo === 'function') {
+			window.navigateTo('data')
+		}
+		renderFilesPanel()
+		openFacetsModal()
+	}
+
+	async function downloadFacetSample() {
+		try {
+			const selectedParticipantIds = [
+				...new Set(
+					allFiles
+						.filter((file) => selectedFileIds.includes(file.id))
+						.map((file) => file.participant_id)
+						.filter(Boolean),
+				),
+			]
+			const destination = await dialog.save({
+				defaultPath: 'biovault-facets-sample.csv',
+				filters: [{ name: 'CSV', extensions: ['csv'] }],
+			})
+			if (!destination) return
+			await invoke('save_participant_facets_sample', {
+				path: destination,
+				participantIds: selectedParticipantIds,
+			})
+			await dialog.message(`Saved sample facet file to:\n${destination}`, {
+				title: 'Facet Sample',
+				type: 'info',
+			})
+		} catch (error) {
+			await dialog.message(String(error), { title: 'Facet Sample', type: 'error' })
+		}
+	}
+
+	function setFacetPreviewRows(rows, sourceFile = null, mode = sourceFile ? 'import' : 'edit') {
+		facetPreviewRows = rows.map((row) => ({
+			participant_id: row.participant_id || row.participantId || '',
+			facet_name: row.facet_name || row.facetName || '',
+			facet_value: row.facet_value || row.facetValue || '',
+		}))
+		facetPreviewSourceFile = sourceFile
+		facetPreviewMode = mode
+		renderFacetPreview()
+	}
+
+	function addFacetPreviewRow() {
+		const selectedParticipantIds = [
+			...new Set(
+				allFiles
+					.filter((file) => selectedFileIds.includes(file.id))
+					.map((file) => file.participant_id)
+					.filter(Boolean),
+			),
+		]
+		facetPreviewRows.push({
+			participant_id:
+				facetPreviewDefaultParticipantId ||
+				facetPreviewRows[0]?.participant_id ||
+				selectedParticipantIds[0] ||
+				'',
+			facet_name: '',
+			facet_value: '',
+		})
+		renderFacetPreview()
+		const index = facetPreviewRows.length - 1
+		const input = document.querySelector(
+			`.facet-edit[data-index="${index}"][data-field="facet_name"]`,
+		)
+		input?.focus()
+	}
+
+	function getFacetPreviewDiagnostics() {
+		const uniqueValues = new Map()
+		const seenKeys = new Set()
+		const duplicateKeys = new Set()
+		const knownParticipants = new Set(allParticipants.map((p) => p.participant_id).filter(Boolean))
+		const unknownParticipants = new Set()
+
+		facetPreviewRows.forEach((row) => {
+			const participantId = row.participant_id.trim()
+			const facetName = row.facet_name.trim()
+			const facetValue = row.facet_value
+			if (!participantId || !facetName) return
+
+			if (!knownParticipants.has(participantId)) unknownParticipants.add(participantId)
+			if (!uniqueValues.has(facetName)) uniqueValues.set(facetName, new Set())
+			uniqueValues.get(facetName).add(facetValue)
+
+			const key = `${participantId}:${facetName}`
+			if (seenKeys.has(key)) duplicateKeys.add(key)
+			seenKeys.add(key)
+		})
+
+		return {
+			uniqueValues,
+			unknownParticipants: Array.from(unknownParticipants).sort(),
+			duplicateKeys: Array.from(duplicateKeys).sort(),
+		}
+	}
+
+	function renderFacetPreview() {
+		const tbody = document.getElementById('facets-preview-body')
+		const summary = document.getElementById('facets-preview-summary')
+		const uniqueBox = document.getElementById('facets-unique-values')
+		const confirm = document.getElementById('facets-confirm')
+		if (!tbody) return
+
+		tbody.innerHTML = ''
+		facetPreviewRows.forEach((row, index) => {
+			const tr = document.createElement('tr')
+			tr.dataset.index = String(index)
+			tr.innerHTML = `
+				<td><input class="facet-edit" data-index="${index}" data-field="participant_id" value="${escapeHtml(row.participant_id)}" style="width: 150px; min-height: 34px; padding: 6px 8px;" /></td>
+				<td><input class="facet-edit" data-index="${index}" data-field="facet_name" value="${escapeHtml(row.facet_name)}" style="width: 160px; min-height: 34px; padding: 6px 8px;" /></td>
+				<td><input class="facet-edit" data-index="${index}" data-field="facet_value" value="${escapeHtml(row.facet_value)}" style="width: 100%; min-width: 220px; min-height: 34px; padding: 6px 8px;" /></td>
+				<td><button class="btn-icon facet-remove-row" data-index="${index}" title="Remove row" type="button"><img src="assets/icons/trash.svg" width="16" height="16" alt="" /></button></td>
+			`
+			tbody.appendChild(tr)
+		})
+
+		tbody.querySelectorAll('.facet-edit').forEach((input) => {
+			input.addEventListener('input', (e) => {
+				const index = Number(e.target.dataset.index)
+				const field = e.target.dataset.field
+				if (facetPreviewRows[index] && field) {
+					facetPreviewRows[index][field] = e.target.value
+					updateFacetPreviewSummary()
+				}
+			})
+		})
+		tbody.querySelectorAll('.facet-remove-row').forEach((btn) => {
+			btn.addEventListener('click', () => {
+				const index = Number(btn.dataset.index)
+				facetPreviewRows.splice(index, 1)
+				renderFacetPreview()
+			})
+		})
+
+		if (summary && facetPreviewRows.length === 0) {
+			summary.textContent =
+				'Load a sheet with participant_id plus facet columns, or participant_id, facet, value.'
+		}
+		if (uniqueBox && facetPreviewRows.length === 0) uniqueBox.style.display = 'none'
+		if (confirm) {
+			confirm.disabled = true
+			confirm.textContent = facetPreviewMode === 'edit' ? 'Save Facets' : 'Import Facets'
+		}
+		updateFacetPreviewSummary()
+	}
+
+	function updateFacetPreviewSummary() {
+		const summary = document.getElementById('facets-preview-summary')
+		const uniqueBox = document.getElementById('facets-unique-values')
+		const confirm = document.getElementById('facets-confirm')
+		const validRows = facetPreviewRows.filter(
+			(row) => row.participant_id.trim() && row.facet_name.trim(),
+		)
+		const diagnostics = getFacetPreviewDiagnostics()
+		const hasBlockingIssues =
+			diagnostics.unknownParticipants.length > 0 || diagnostics.duplicateKeys.length > 0
+
+		if (summary) {
+			const source = facetPreviewSourceFile
+				? ` from ${getPathBasename(facetPreviewSourceFile)}`
+				: ''
+			summary.textContent = `${validRows.length} facet value${validRows.length === 1 ? '' : 's'}${source}.`
+		}
+
+		if (uniqueBox) {
+			if (validRows.length === 0) {
+				uniqueBox.style.display = 'none'
+			} else {
+				const uniqueLines = Array.from(diagnostics.uniqueValues.entries())
+					.map(([name, values]) => {
+						const sorted = Array.from(values).sort()
+						const valueButtons = sorted
+							.map((value) => {
+								const label = value === '' ? '(empty)' : value
+								const display =
+									value === ''
+										? '<em>(empty)</em>'
+										: `<code style="white-space: pre-wrap;">${escapeHtml(JSON.stringify(value))}</code>`
+								return `<button type="button" class="facet-unique-value" data-facet-name="${escapeHtml(name)}" data-facet-value="${escapeHtml(value)}" title="Find ${escapeHtml(label)}" style="display: block; width: 100%; text-align: left; margin: 4px 0; padding: 5px 7px; border: 1px solid var(--border-color); border-radius: 4px; background: #fff; cursor: pointer; font-size: 12px;">${display}</button>`
+							})
+							.join('')
+						return `<div class="facet-unique-group" style="margin-bottom: 14px;"><div style="font-weight: 700; margin-bottom: 6px;">${escapeHtml(name)} <span style="font-weight: 400; color: var(--text-secondary);">(${sorted.length})</span></div>${valueButtons}</div>`
+					})
+					.join('')
+				const warnings = [
+					diagnostics.unknownParticipants.length
+						? `<div style="color: var(--error-color, #dc2626); margin-top: 8px;">Unknown participants: ${diagnostics.unknownParticipants.map(escapeHtml).join(', ')}</div>`
+						: '',
+					diagnostics.duplicateKeys.length
+						? `<div style="color: var(--error-color, #dc2626); margin-top: 8px;">Duplicate participant/facet pairs: ${diagnostics.duplicateKeys.map(escapeHtml).join(', ')}</div>`
+						: '',
+				].join('')
+				uniqueBox.innerHTML = `${uniqueLines}${warnings}`
+				uniqueBox.style.display = 'block'
+				uniqueBox.querySelectorAll('.facet-unique-value').forEach((button) => {
+					button.addEventListener('click', () => {
+						const facetName = button.dataset.facetName || ''
+						const facetValue = button.dataset.facetValue || ''
+						const index = facetPreviewRows.findIndex(
+							(row) => row.facet_name === facetName && row.facet_value === facetValue,
+						)
+						if (index < 0) return
+						const input = document.querySelector(
+							`.facet-edit[data-index="${index}"][data-field="facet_value"]`,
+						)
+						const row = document.querySelector(`#facets-preview-body tr[data-index="${index}"]`)
+						row?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+						row?.classList.add('selected')
+						setTimeout(() => row?.classList.remove('selected'), 900)
+						input?.focus()
+						input?.select?.()
+					})
+				})
+			}
+		}
+
+		if (confirm) {
+			confirm.disabled = validRows.length === 0 || hasBlockingIssues
+			confirm.textContent = facetPreviewMode === 'edit' ? 'Save Facets' : 'Import Facets'
+		}
+	}
+
+	async function chooseFacetFile() {
+		const selected = await dialog.open({
+			multiple: false,
+			directory: false,
+			filters: [{ name: 'Metadata sheets', extensions: ['csv', 'tsv', 'tab'] }],
+		})
+		const path = Array.isArray(selected) ? selected[0] : selected
+		if (!path) return
+		try {
+			const preview = await invoke('preview_participant_facets', { path })
+			setFacetPreviewRows(preview.rows || [], path, 'import')
+		} catch (error) {
+			await dialog.message(String(error), { title: 'Facet Import', type: 'error' })
+		}
+	}
+
+	async function confirmFacetImport() {
+		const rows = facetPreviewRows
+			.map((row) => ({
+				participant_id: row.participant_id.trim(),
+				facet_name: row.facet_name.trim(),
+				facet_value: row.facet_value.trim(),
+			}))
+			.filter((row) => row.participant_id && row.facet_name)
+
+		try {
+			const imported = await invoke('import_participant_facets', {
+				rows,
+				sourceFile: facetPreviewSourceFile,
+			})
+			closeFacetsModal()
+			await loadData()
+			await dialog.message(`Imported ${imported} facet value${imported === 1 ? '' : 's'}.`, {
+				title: 'Facet Import',
+				type: 'info',
+			})
+		} catch (error) {
+			await dialog.message(String(error), { title: 'Facet Import', type: 'error' })
+		}
+	}
+
 	// ============================================================================
 	// INITIALIZATION
 	// ============================================================================
@@ -3534,6 +3957,22 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				void handleSampleDataImport(sampleId, btn)
 			})
 		}
+		document.getElementById('facets-import-btn')?.addEventListener('click', openFacetsModal)
+		document.getElementById('facets-close')?.addEventListener('click', closeFacetsModal)
+		document.getElementById('facets-cancel')?.addEventListener('click', closeFacetsModal)
+		document
+			.querySelector('#facets-modal .modal-overlay')
+			?.addEventListener('click', closeFacetsModal)
+		document.getElementById('facets-choose-file')?.addEventListener('click', () => {
+			void chooseFacetFile()
+		})
+		document.getElementById('facets-download-sample')?.addEventListener('click', () => {
+			void downloadFacetSample()
+		})
+		document.getElementById('facets-add-row')?.addEventListener('click', addFacetPreviewRow)
+		document.getElementById('facets-confirm')?.addEventListener('click', () => {
+			void confirmFacetImport()
+		})
 		const downloadGrchBtn = document.getElementById('download-grch38-btn')
 		if (downloadGrchBtn) {
 			downloadGrchBtn.addEventListener('click', async () => {
@@ -3993,6 +4432,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				}
 			})
 		}
+		window.openFacetsForFileIds = openFacetsForFileIds
 
 		// Queue processor disabled - hide UI elements
 		const queueCard = document.getElementById('queue-card-container')

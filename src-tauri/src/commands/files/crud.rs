@@ -1,3 +1,4 @@
+use crate::commands::files::facets::facets_for_participant_ids;
 use crate::types::{AppState, FileRecord};
 
 #[tauri::command]
@@ -8,27 +9,42 @@ pub fn get_files(state: tauri::State<AppState>) -> Result<Vec<FileRecord>, Strin
     let cli_files = biovault::data::list_files(&db, None, None, false, None)
         .map_err(|e| format!("Failed to list files: {}", e))?;
 
+    let participant_ids: Vec<String> = cli_files
+        .iter()
+        .filter_map(|f| f.participant_id.clone())
+        .collect();
+    let facets_by_participant =
+        facets_for_participant_ids(&db, &participant_ids).unwrap_or_default();
+
     // Convert CLI FileRecords to desktop FileRecords
     let files: Vec<FileRecord> = cli_files
         .into_iter()
-        .map(|f| FileRecord {
-            id: f.id,
-            participant_id: f.participant_id,
-            participant_name: f.participant_name,
-            file_path: f.file_path,
-            file_hash: f.file_hash,
-            file_type: f.file_type,
-            file_size: f.file_size,
-            data_type: f.data_type,
-            source: f.source,
-            grch_version: f.grch_version,
-            row_count: f.row_count,
-            chromosome_count: f.chromosome_count,
-            inferred_sex: f.inferred_sex,
-            status: f.status,
-            processing_error: f.processing_error,
-            created_at: f.created_at,
-            updated_at: f.updated_at,
+        .map(|f| {
+            let facets = f
+                .participant_id
+                .as_ref()
+                .and_then(|pid| facets_by_participant.get(pid).cloned())
+                .unwrap_or_default();
+            FileRecord {
+                id: f.id,
+                participant_id: f.participant_id,
+                participant_name: f.participant_name,
+                file_path: f.file_path,
+                file_hash: f.file_hash,
+                file_type: f.file_type,
+                file_size: f.file_size,
+                data_type: f.data_type,
+                source: f.source,
+                grch_version: f.grch_version,
+                row_count: f.row_count,
+                chromosome_count: f.chromosome_count,
+                inferred_sex: f.inferred_sex,
+                facets,
+                status: f.status,
+                processing_error: f.processing_error,
+                created_at: f.created_at,
+                updated_at: f.updated_at,
+            }
         })
         .collect();
 

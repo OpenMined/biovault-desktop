@@ -80,6 +80,7 @@ pub fn start_analysis(
             row_count: f.row_count,
             chromosome_count: f.chromosome_count,
             inferred_sex: f.inferred_sex,
+            facets: Default::default(),
             status: f.status,
             processing_error: f.processing_error,
             created_at: f.created_at,

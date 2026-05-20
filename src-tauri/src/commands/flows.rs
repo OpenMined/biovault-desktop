@@ -1,7 +1,8 @@
+use crate::commands::files::facets::facets_for_participant_ids;
 use crate::types::AppState;
 use biovault::syftbox::storage::SyftBoxStorage;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
@@ -59,6 +60,96 @@ pub struct FlowRunSelection {
     pub data_type: Option<String>,
     #[serde(default, alias = "data_source")]
     pub data_source: Option<String>,
+}
+
+fn collect_facet_names(
+    facets_by_participant: &HashMap<String, BTreeMap<String, String>>,
+) -> Vec<String> {
+    let mut names: HashSet<String> = HashSet::new();
+    for facets in facets_by_participant.values() {
+        names.extend(facets.keys().cloned());
+    }
+    let mut names: Vec<String> = names.into_iter().collect();
+    names.sort();
+    names
+}
+
+fn required_facets_for_genotype_selection(spec: &FlowSpec) -> Vec<String> {
+    let mut required = HashSet::new();
+    for input_spec in spec.inputs.values() {
+        if biovault::module_spec::types_compatible("List[GenotypeRecord]", input_spec.raw_type()) {
+            for facet in input_spec.required_facets() {
+                let trimmed = facet.trim();
+                if !trimmed.is_empty() {
+                    required.insert(trimmed.to_string());
+                }
+            }
+        }
+    }
+    let mut required: Vec<String> = required.into_iter().collect();
+    required.sort();
+    required
+}
+
+fn validate_required_facets(
+    required_facets: &[String],
+    participant_ids: &[String],
+    facets_by_participant: &HashMap<String, BTreeMap<String, String>>,
+) -> Result<(), String> {
+    if required_facets.is_empty() {
+        return Ok(());
+    }
+
+    let mut missing = Vec::new();
+    for participant_id in participant_ids {
+        let facets = facets_by_participant.get(participant_id);
+        for facet in required_facets {
+            let has_value = facets
+                .and_then(|values| values.get(facet))
+                .map(|value| !value.trim().is_empty())
+                .unwrap_or(false);
+            if !has_value {
+                missing.push(format!("{} missing {}", participant_id, facet));
+            }
+        }
+    }
+
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        let preview = missing
+            .iter()
+            .take(12)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let suffix = if missing.len() > 12 {
+            format!(" and {} more", missing.len() - 12)
+        } else {
+            String::new()
+        };
+        Err(format!(
+            "Flow requires participant facets before it can run: {}{}",
+            preview, suffix
+        ))
+    }
+}
+
+fn append_facets_to_record(
+    record: &mut Vec<String>,
+    participant_id: &str,
+    facet_names: &[String],
+    facets_by_participant: &HashMap<String, BTreeMap<String, String>>,
+) {
+    let facets = facets_by_participant.get(participant_id);
+    for name in facet_names {
+        record.push(
+            facets
+                .and_then(|values| values.get(name))
+                .cloned()
+                .unwrap_or_default(),
+        );
+    }
 }
 
 /// Persistent flow state - saved to flow.state.json for resume/recovery
@@ -2268,16 +2359,40 @@ pub async fn run_flow_impl(
                 format!("Failed to prepare inputs directory for samplesheet: {}", e)
             })?;
             let sheet_path = inputs_dir.join("selected_participants.csv");
+            let row_participant_ids: Vec<String> = rows
+                .iter()
+                .map(|(participant, _)| participant.clone())
+                .collect();
+            let facets_by_participant =
+                facets_for_participant_ids(&biovault_db, &row_participant_ids).unwrap_or_default();
+            let flow_spec = FlowSpec::load(&yaml_path)
+                .map_err(|e| format!("Failed to load flow spec: {}", e))?;
+            let required_facets = required_facets_for_genotype_selection(&flow_spec);
+            validate_required_facets(
+                &required_facets,
+                &row_participant_ids,
+                &facets_by_participant,
+            )?;
+            let facet_names = collect_facet_names(&facets_by_participant);
 
             let mut writer = csv::Writer::from_path(&sheet_path)
                 .map_err(|e| format!("Failed to create samplesheet: {}", e))?;
+            let mut header = vec!["participant_id".to_string(), "genotype_file".to_string()];
+            header.extend(facet_names.iter().cloned());
             writer
-                .write_record(["participant_id", "genotype_file"])
+                .write_record(header)
                 .map_err(|e| format!("Failed to write samplesheet header: {}", e))?;
 
             for (participant, file_path) in &rows {
+                let mut record = vec![participant.clone(), file_path.clone()];
+                append_facets_to_record(
+                    &mut record,
+                    participant,
+                    &facet_names,
+                    &facets_by_participant,
+                );
                 writer
-                    .write_record([participant, file_path])
+                    .write_record(record)
                     .map_err(|e| format!("Failed to write samplesheet entry: {}", e))?;
             }
             writer
@@ -2305,6 +2420,7 @@ pub async fn run_flow_impl(
                 "samplesheet_path": sheet_path.to_string_lossy(),
                 "participant_count": participant_total,
                 "file_paths": file_paths,
+                "facets": facets_by_participant,
             });
             apply_selection_context(&mut selection_value);
             selection_metadata = Some(selection_value);
@@ -2375,18 +2491,36 @@ pub async fn run_flow_impl(
 
             let mut writer = csv::Writer::from_path(&sheet_path)
                 .map_err(|e| format!("Failed to create samplesheet: {}", e))?;
+            let record_participant_ids: Vec<String> = records
+                .iter()
+                .map(|(participant, _)| participant.clone())
+                .collect();
+            let facets_by_participant =
+                facets_for_participant_ids(&biovault_db, &record_participant_ids)
+                    .unwrap_or_default();
+            let flow_spec = FlowSpec::load(&yaml_path)
+                .map_err(|e| format!("Failed to load flow spec: {}", e))?;
+            let required_facets = required_facets_for_genotype_selection(&flow_spec);
+            validate_required_facets(
+                &required_facets,
+                &record_participant_ids,
+                &facets_by_participant,
+            )?;
+            let facet_names = collect_facet_names(&facets_by_participant);
 
             if has_aligned {
                 // Aligned file format - need index and reference files
+                let mut header = vec![
+                    "participant_id".to_string(),
+                    "aligned_file".to_string(),
+                    "aligned_index".to_string(),
+                    "reference_file".to_string(),
+                    "reference_index".to_string(),
+                    "ref_version".to_string(),
+                ];
+                header.extend(facet_names.iter().cloned());
                 writer
-                    .write_record([
-                        "participant_id",
-                        "aligned_file",
-                        "aligned_index",
-                        "reference_file",
-                        "reference_index",
-                        "ref_version",
-                    ])
+                    .write_record(header)
                     .map_err(|e| format!("Failed to write samplesheet header: {}", e))?;
 
                 // Get all files for reference lookup
@@ -2462,26 +2596,42 @@ pub async fn run_flow_impl(
                         .clone()
                         .unwrap_or_else(|| "GRCh38".to_string());
 
+                    let mut row = vec![
+                        participant.clone(),
+                        file_path.clone(),
+                        index_path,
+                        ref_file,
+                        ref_index,
+                        ref_version,
+                    ];
+                    append_facets_to_record(
+                        &mut row,
+                        participant,
+                        &facet_names,
+                        &facets_by_participant,
+                    );
                     writer
-                        .write_record([
-                            participant,
-                            file_path,
-                            &index_path,
-                            &ref_file,
-                            &ref_index,
-                            &ref_version,
-                        ])
+                        .write_record(row)
                         .map_err(|e| format!("Failed to write samplesheet entry: {}", e))?;
                 }
             } else {
                 // Genotype file format
+                let mut header = vec!["participant_id".to_string(), "genotype_file".to_string()];
+                header.extend(facet_names.iter().cloned());
                 writer
-                    .write_record(["participant_id", "genotype_file"])
+                    .write_record(header)
                     .map_err(|e| format!("Failed to write samplesheet header: {}", e))?;
 
                 for (participant, record) in &records {
+                    let mut row = vec![participant.clone(), record.file_path.clone()];
+                    append_facets_to_record(
+                        &mut row,
+                        participant,
+                        &facet_names,
+                        &facets_by_participant,
+                    );
                     writer
-                        .write_record([participant, &record.file_path])
+                        .write_record(row)
                         .map_err(|e| format!("Failed to write samplesheet entry: {}", e))?;
                 }
             }
@@ -2516,6 +2666,7 @@ pub async fn run_flow_impl(
                 "samplesheet_path": sheet_path.to_string_lossy(),
                 "participant_count": participant_count,
                 "file_paths": file_paths,
+                "facets": facets_by_participant,
             });
             apply_selection_context(&mut selection_value);
             selection_metadata = Some(selection_value);
