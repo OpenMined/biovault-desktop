@@ -42,7 +42,7 @@ pub fn save_participant_facets_sample(
         ids = vec!["P001".to_string(), "P002".to_string(), "P003".to_string()];
     }
 
-    let mut content = String::from("participant_id,country,cohort\n");
+    let mut content = String::from("participant_id,country,sex\n");
     for id in ids {
         content.push_str(&format!("{},,\n", id));
     }

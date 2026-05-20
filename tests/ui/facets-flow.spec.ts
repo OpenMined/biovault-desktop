@@ -37,6 +37,9 @@ test.describe('Participant facets flow @facets-flow', () => {
 		expect(flowYaml).toContain('required_facets:')
 		expect(moduleYaml).toContain('entrypoint: workflow.nf')
 		expect(workflowNf).toContain('facet_counts.tsv')
+		expect(workflowNf).toContain('record.facets')
+		expect(workflowNf).toContain("'genotype_path'")
+		expect(workflowNf).toContain("'validation'")
 
 		const participants = [
 			{ id: '100001', split: 'island', country: 'Bahamas', variants: 5 },
