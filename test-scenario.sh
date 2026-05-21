@@ -107,6 +107,7 @@ Scenario Options (pick one):
   --flows-solo     Run flow UI test only (single client)
   --flows-gwas     Run GWAS flow UI test only (single client)
   --flows-collab   Run two-client flow collaboration test
+  --biopop         Run BioVault_popgen two-client URL-import flow e2e test
   --flows-pause-resume  Test flow pause/resume with state persistence
   --syqure-flow    Run three-client interactive Syqure flow (no Playwright)
   --pipelines-multiparty  Run three-client multiparty messaging test
@@ -234,6 +235,10 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--flows-collab)
 			SCENARIO="flows-collab"
+			shift
+			;;
+		--biopop)
+			SCENARIO="biopop"
 			shift
 			;;
 		--flows-pause-resume)
@@ -2783,6 +2788,42 @@ PY
 		timer_pop
 
 		# In wait mode, keep everything running
+		if [[ "$WAIT_MODE" == "1" ]]; then
+			info "Wait mode: Servers will stay running. Press Ctrl+C to exit."
+			while true; do sleep 1; done
+		fi
+		;;
+	biopop)
+		start_static_server
+		start_tauri_instances
+
+		BIOPOP_ROOT="${BIOPOP_ROOT:-/Users/madhavajay/dev/BioVault_popgen}"
+		BIOPOP_DATA_DIR="${BIOPOP_DATA_DIR:-$BIOPOP_ROOT/01_mock_data_generation/output}"
+		BIOPOP_FACETS_FILE="${BIOPOP_FACETS_FILE:-$BIOPOP_ROOT/01_mock_data_generation/facets/biovault-facets.csv}"
+		BIOPOP_FLOW_URL_ROOT="${BIOPOP_FLOW_URL_ROOT:-https://github.com/madhavajay/BioVault_popgen/tree/main/flows}"
+
+		if [[ ! -d "$BIOPOP_DATA_DIR" ]]; then
+			echo "Missing BioVault_popgen data directory: $BIOPOP_DATA_DIR" >&2
+			exit 1
+		fi
+		if [[ ! -f "$BIOPOP_FACETS_FILE" ]]; then
+			echo "Missing BioVault_popgen facets file: $BIOPOP_FACETS_FILE" >&2
+			exit 1
+		fi
+
+		info "=== Running BioVault_popgen URL Flow E2E Test ==="
+		info "Data:   $BIOPOP_DATA_DIR"
+		info "Facets: $BIOPOP_FACETS_FILE"
+		info "Flows:  $BIOPOP_FLOW_URL_ROOT"
+		timer_push "Playwright: @biopop"
+		run_ui_grep "@biopop" \
+			"BIOPOP_ROOT=$BIOPOP_ROOT" \
+			"BIOPOP_DATA_DIR=$BIOPOP_DATA_DIR" \
+			"BIOPOP_FACETS_FILE=$BIOPOP_FACETS_FILE" \
+			"BIOPOP_FLOW_URL_ROOT=$BIOPOP_FLOW_URL_ROOT" \
+			"INTERACTIVE_MODE=$INTERACTIVE_MODE"
+		timer_pop
+
 		if [[ "$WAIT_MODE" == "1" ]]; then
 			info "Wait mode: Servers will stay running. Press Ctrl+C to exit."
 			while true; do sleep 1; done

@@ -419,6 +419,9 @@ fn get_commands_list() -> serde_json::Value {
         cmd_async("import_files_pending", "files", false),
         cmd_async("import_files", "files", false),
         cmd_async("import_files_with_metadata", "files", false),
+        cmd("preview_participant_facets", "files", true),
+        cmd("import_participant_facets", "files", false),
+        cmd("save_participant_facets_sample", "files", false),
         cmd("is_directory", "files", true),
         cmd("delete_file", "files", false),
         cmd("delete_files_bulk", "files", false),
@@ -3346,6 +3349,55 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             .map_err(|e| format!("Failed to parse name: {}", e))?;
             let result = crate::commands::datasets::unsubscribe_dataset(owner, name)?;
             Ok(serde_json::to_value(result).unwrap())
+        }
+
+        // =====================================================================
+        // Participant Facet Commands
+        // =====================================================================
+        "preview_participant_facets" => {
+            let path: String = serde_json::from_value(
+                args.get("path")
+                    .cloned()
+                    .ok_or_else(|| "Missing path".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse path: {}", e))?;
+            let result =
+                crate::commands::files::facets::preview_participant_facets(state.clone(), path)?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "import_participant_facets" => {
+            let rows: Vec<crate::commands::files::facets::FacetRow> = serde_json::from_value(
+                args.get("rows")
+                    .cloned()
+                    .ok_or_else(|| "Missing rows".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse rows: {}", e))?;
+            let source_file: Option<String> = args
+                .get("sourceFile")
+                .or_else(|| args.get("source_file"))
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok());
+            let result = crate::commands::files::facets::import_participant_facets(
+                state.clone(),
+                rows,
+                source_file,
+            )?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "save_participant_facets_sample" => {
+            let path: String = serde_json::from_value(
+                args.get("path")
+                    .cloned()
+                    .ok_or_else(|| "Missing path".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse path: {}", e))?;
+            let participant_ids: Option<Vec<String>> = args
+                .get("participantIds")
+                .or_else(|| args.get("participant_ids"))
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok());
+            crate::commands::files::facets::save_participant_facets_sample(path, participant_ids)?;
+            Ok(serde_json::Value::Null)
         }
 
         // =====================================================================

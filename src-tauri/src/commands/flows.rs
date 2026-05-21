@@ -39,26 +39,26 @@ pub struct FlowCreateRequest {
 #[serde(rename_all = "camelCase")]
 pub struct FlowRunSelection {
     /// Legacy: database file IDs (deprecated, use urls instead)
-    #[serde(default, alias = "file_ids")]
+    #[serde(default, alias = "file_ids", alias = "fileIds")]
     pub file_ids: Vec<i64>,
     /// Syft URLs to resolve to local file paths
     #[serde(default)]
     pub urls: Vec<String>,
-    #[serde(default, alias = "participant_ids")]
+    #[serde(default, alias = "participant_ids", alias = "participantIds")]
     pub participant_ids: Vec<String>,
-    #[serde(default, alias = "dataset_name")]
+    #[serde(default, alias = "dataset_name", alias = "datasetName")]
     pub dataset_name: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "dataset_shape", alias = "datasetShape")]
     pub dataset_shape: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "dataset_data_type", alias = "datasetDataType")]
     pub dataset_data_type: Option<String>,
-    #[serde(default, alias = "dataset_owner")]
+    #[serde(default, alias = "dataset_owner", alias = "datasetOwner")]
     pub dataset_owner: Option<String>,
-    #[serde(default, alias = "asset_keys")]
+    #[serde(default, alias = "asset_keys", alias = "assetKeys")]
     pub asset_keys: Vec<String>,
-    #[serde(default, alias = "data_type")]
+    #[serde(default, alias = "data_type", alias = "dataType")]
     pub data_type: Option<String>,
-    #[serde(default, alias = "data_source")]
+    #[serde(default, alias = "data_source", alias = "dataSource")]
     pub data_source: Option<String>,
 }
 

@@ -1,4 +1,4 @@
-use crate::types::{SyftBoxConfigInfo, SyftBoxState};
+use crate::types::{SyftBoxConfigInfo, SyftBoxState, DEFAULT_SYFTBOX_SERVER_URL};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -22,6 +22,35 @@ static LAST_CONTROL_PLANE_OK_LOG: AtomicU64 = AtomicU64::new(0);
 static LAST_KNOWN_WS_CONNECTED: AtomicBool = AtomicBool::new(false);
 static CONTROL_PLANE_LOG: once_cell::sync::Lazy<Mutex<Vec<ControlPlaneLogEntry>>> =
     once_cell::sync::Lazy::new(|| Mutex::new(Vec::new()));
+
+fn resolve_syftbox_server_url(server_url: Option<String>) -> String {
+    if let Some(url) = server_url {
+        let trimmed = url.trim();
+        if !trimmed.is_empty() {
+            return trimmed.trim_end_matches('/').to_string();
+        }
+    }
+
+    if let Ok(cfg) = biovault::config::Config::load() {
+        if let Some(creds) = cfg.syftbox_credentials.as_ref() {
+            if let Some(url) = creds.server_url.as_ref() {
+                let trimmed = url.trim();
+                if !trimmed.is_empty() {
+                    return trimmed.trim_end_matches('/').to_string();
+                }
+            }
+        }
+    }
+
+    if let Ok(env_server) = std::env::var("SYFTBOX_SERVER_URL") {
+        let trimmed = env_server.trim();
+        if !trimmed.is_empty() {
+            return trimmed.trim_end_matches('/').to_string();
+        }
+    }
+
+    DEFAULT_SYFTBOX_SERVER_URL.to_string()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ControlPlaneLogEntry {
@@ -1822,10 +1851,11 @@ pub fn open_url(url: String) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn syftbox_request_otp(email: String, server_url: Option<String>) -> Result<(), String> {
+    let resolved_server_url = resolve_syftbox_server_url(server_url);
     crate::desktop_log!(
-        "📧 syftbox_request_otp called for: {} (server: {:?})",
+        "📧 syftbox_request_otp called for: {} (server: {})",
         email,
-        server_url
+        resolved_server_url
     );
 
     if let Ok(cfg) = biovault::config::Config::load() {
@@ -1840,14 +1870,19 @@ pub async fn syftbox_request_otp(email: String, server_url: Option<String>) -> R
         crate::desktop_log!("ℹ️ SYFTBOX_SERVER_URL env: {}", env_server);
     }
 
-    match biovault::cli::commands::syftbox::request_otp(Some(email), None, server_url.clone()).await
+    match biovault::cli::commands::syftbox::request_otp(
+        Some(email),
+        None,
+        Some(resolved_server_url.clone()),
+    )
+    .await
     {
         Ok(_) => {}
         Err(err) => {
             crate::desktop_log!("❌ syftbox_request_otp error: {:?}", err);
             return Err(format!(
-                "Failed to request OTP via {:?}: {}",
-                server_url, err
+                "Failed to request OTP via {}: {}",
+                resolved_server_url, err
             ));
         }
     }
@@ -1862,13 +1897,17 @@ pub async fn syftbox_submit_otp(
     email: String,
     server_url: Option<String>,
 ) -> Result<(), String> {
-    crate::desktop_log!("🔐 syftbox_submit_otp called (server: {:?})", server_url);
+    let resolved_server_url = resolve_syftbox_server_url(server_url);
+    crate::desktop_log!(
+        "🔐 syftbox_submit_otp called (server: {})",
+        resolved_server_url
+    );
 
     match biovault::cli::commands::syftbox::submit_otp(
         &code,
         Some(email),
+        Some(resolved_server_url.clone()),
         None,
-        server_url.clone(),
         None,
         None,
     )
@@ -1878,8 +1917,8 @@ pub async fn syftbox_submit_otp(
         Err(err) => {
             crate::desktop_log!("❌ syftbox_submit_otp error: {:?}", err);
             return Err(format!(
-                "Failed to verify OTP via {:?}: {}",
-                server_url, err
+                "Failed to verify OTP via {}: {}",
+                resolved_server_url, err
             ));
         }
     }
@@ -1930,6 +1969,20 @@ pub async fn syftbox_submit_otp(
 #[tauri::command]
 pub fn check_syftbox_auth() -> Result<bool, String> {
     crate::desktop_log!("🔍 check_syftbox_auth called");
+
+    let dev_mode = env::var("BIOVAULT_DEV_MODE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let skip_auth = env::var("BIOVAULT_SKIP_SYFTBOX_AUTH")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let dev_stack_configured =
+        env::var_os("DEV_WS_BRIDGE").is_some() || env::var_os("SYFTBOX_CONFIG_PATH").is_some();
+
+    if dev_mode && (skip_auth || dev_stack_configured) {
+        crate::desktop_log!("  Authentication status: true (dev mode auth bypass)");
+        return Ok(true);
+    }
 
     // Load BioVault config to check if syftbox_credentials exist
     let config = match biovault::config::Config::load() {

@@ -384,6 +384,8 @@ launch_desktop_instance() {
 
   export BIOVAULT_HOME="$home"
   export BIOVAULT_DEV_MODE=1
+  export BIOVAULT_SKIP_SYFTBOX_AUTH=1
+  export SYFTBOX_AUTH_ENABLED=0
   # Only set when explicitly enabled; presence alone triggers debug in syftbox-sdk.
   if [[ "${BIOVAULT_DEV_SYFTBOX:-0}" == "1" ]]; then
     export BIOVAULT_DEV_SYFTBOX=1

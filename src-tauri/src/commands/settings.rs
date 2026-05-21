@@ -1108,6 +1108,9 @@ pub fn get_dev_mode_info() -> serde_json::Value {
     let dev_syftbox = env::var("BIOVAULT_DEV_SYFTBOX")
         .map(|v| v == "1" || v.to_lowercase() == "true")
         .unwrap_or(false);
+    let skip_syftbox_auth = env::var("BIOVAULT_SKIP_SYFTBOX_AUTH")
+        .map(|v| v == "1" || v.to_lowercase() == "true")
+        .unwrap_or(false);
     let server_url = env::var("SYFTBOX_SERVER_URL").ok();
     let syftbox_config_path = env::var("SYFTBOX_CONFIG_PATH").ok();
     let biovault_home = env::var("BIOVAULT_HOME").ok();
@@ -1115,6 +1118,7 @@ pub fn get_dev_mode_info() -> serde_json::Value {
     serde_json::json!({
         "dev_mode": dev_mode,
         "dev_syftbox": dev_syftbox,
+        "skip_syftbox_auth": skip_syftbox_auth,
         "server_url": server_url,
         "syftbox_config_path": syftbox_config_path,
         "biovault_home": biovault_home,
