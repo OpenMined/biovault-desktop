@@ -1650,10 +1650,18 @@ export function createMessagesModule({
 	// AUTHORIZATION
 	// ============================================================================
 
+	function shouldBypassMessagesAuthInDev(devModeInfo) {
+		const hasDevSyftboxConfig = Boolean(devModeInfo?.syftbox_config_path || devModeInfo?.server_url)
+		return Boolean(
+			devModeInfo?.dev_mode &&
+				(devModeInfo?.dev_syftbox || devModeInfo?.skip_syftbox_auth || hasDevSyftboxConfig),
+		)
+	}
+
 	async function ensureMessagesAuthorization() {
 		try {
 			const devModeInfo = await invoke('get_dev_mode_info').catch(() => ({ dev_mode: false }))
-			if (devModeInfo.dev_mode && devModeInfo.dev_syftbox) {
+			if (shouldBypassMessagesAuthInDev(devModeInfo)) {
 				messagesAuthorized = true
 				setSyftboxStatus({ running: true, mode: 'Dev' })
 			} else {
@@ -1734,7 +1742,7 @@ export function createMessagesModule({
 
 		try {
 			const devModeInfo = await invoke('get_dev_mode_info').catch(() => ({ dev_mode: false }))
-			if (devModeInfo.dev_mode && devModeInfo.dev_syftbox) {
+			if (shouldBypassMessagesAuthInDev(devModeInfo)) {
 				setSyftboxStatus({ running: true, mode: 'Dev' })
 			} else {
 				const status = await invoke('get_syftbox_state')
@@ -2418,8 +2426,9 @@ export function createMessagesModule({
 	async function ensureMessagesAuthorizationAndStartNew() {
 		try {
 			const devModeInfo = await invoke('get_dev_mode_info').catch(() => ({ dev_mode: false }))
-			if (devModeInfo.dev_mode && devModeInfo.dev_syftbox) {
+			if (shouldBypassMessagesAuthInDev(devModeInfo)) {
 				messagesAuthorized = true
+				setSyftboxStatus({ running: true, mode: 'Dev' })
 			}
 		} catch (_) {
 			// Ignore

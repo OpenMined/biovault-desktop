@@ -1291,7 +1291,7 @@ async function syncMessagesWithDebug(
 	}
 }
 
-test.describe.only('Flows Collaboration @flows-collab', () => {
+test.describe('Flows Collaboration @flows-collab', () => {
 	test('two clients collaborate on flow run and share results', async ({ browser }, testInfo) => {
 		const testTimer = timer('Total test time')
 		const wsPort1 = Number.parseInt(process.env.DEV_WS_BRIDGE_PORT_BASE || '3333', 10)

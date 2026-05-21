@@ -2362,13 +2362,15 @@ export function initOnboarding({
 	const resendCodeBtn = document.getElementById('resend-code-btn')
 	if (resendCodeBtn) {
 		resendCodeBtn.addEventListener('click', async () => {
+			await getDefaultServer()
 			const email = document.getElementById('onboarding-email').value.trim()
+			const server_url = getCurrentSyftboxServerUrl()
 
 			resendCodeBtn.disabled = true
 			resendCodeBtn.textContent = 'Sending...'
 
 			try {
-				await invoke('syftbox_request_otp', { email })
+				await invoke('syftbox_request_otp', { email, server_url })
 
 				// Clear inputs
 				codeInputs.forEach((inp) => {
@@ -2860,7 +2862,7 @@ export function initOnboarding({
 		document.getElementById('onboarding-step-3-email').style.display = 'block'
 	})
 
-	document.getElementById('onboarding-next-3-key')?.addEventListener('click', () => {
+	document.getElementById('onboarding-next-3-key')?.addEventListener('click', async () => {
 		if (
 			document.getElementById('onboarding-recovery-block').style.display !== 'none' &&
 			!document.getElementById('onboarding-recovery-ack').checked
@@ -2871,6 +2873,22 @@ export function initOnboarding({
 			})
 			return
 		}
+
+		try {
+			const devModeInfo = await invoke('get_dev_mode_info')
+			if (devModeInfo.dev_mode && devModeInfo.skip_syftbox_auth) {
+				const email = document.getElementById('onboarding-email').value.trim()
+				console.log('🧪 Dev mode skipping SyftBox auth screen')
+				document.getElementById('onboarding-step-3-key').style.display = 'none'
+				document.getElementById('onboarding-step-4').style.display = 'none'
+				document.getElementById('onboarding-step-5').style.display = 'block'
+				initializeBioVault(email)
+				return
+			}
+		} catch (error) {
+			console.warn('⚠️ Could not check SyftBox auth skip flag:', error)
+		}
+
 		document.getElementById('onboarding-step-3-key').style.display = 'none'
 		document.getElementById('onboarding-step-4').style.display = 'block'
 		const step4 = document.getElementById('onboarding-step-4')

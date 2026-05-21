@@ -88,6 +88,7 @@ test.describe('Onboarding flow', () => {
 					w.__TEST_STATE__ = {
 						onboarded: window.sessionStorage.getItem(storageKey) === 'true',
 						requestCount: 0,
+						requestArgs: [],
 						otp: '12345678',
 					}
 				}
@@ -97,7 +98,7 @@ test.describe('Onboarding flow', () => {
 
 				w.__TEST_INVOKE_OVERRIDE__ = async (cmd, args = {}) => {
 					const state =
-						/** @type {{ onboarded: boolean; requestCount: number; otp: string }} */ w.__TEST_STATE__
+						/** @type {{ onboarded: boolean; requestCount: number; requestArgs: unknown[]; otp: string }} */ w.__TEST_STATE__
 					switch (cmd) {
 						case 'check_is_onboarded':
 							return state.onboarded
@@ -141,6 +142,7 @@ test.describe('Onboarding flow', () => {
 							return '/tmp'
 						case 'syftbox_request_otp':
 							state.requestCount += 1
+							state.requestArgs.push(args)
 							state.otp = state.requestCount === 1 ? '12345678' : '87654321'
 							return { sent: true }
 						case 'syftbox_submit_otp': {
@@ -238,6 +240,14 @@ test.describe('Onboarding flow', () => {
 		await expect(page.locator('#syftbox-email-info')).toBeVisible()
 		await page.locator('#send-login-code-btn').click()
 		await expect(page.locator('#syftbox-otp-state')).toBeVisible()
+		await expect
+			.poll(async () =>
+				page.evaluate(() => {
+					const w = /** @type {any} */ window
+					return w.__TEST_STATE__?.requestArgs?.[0]?.server_url
+				}),
+			)
+			.toBe('https://dev.syftbox.net')
 
 		await fillOtp(page, '00000000')
 		await page.locator('#verify-code-btn').click()
@@ -252,6 +262,11 @@ test.describe('Onboarding flow', () => {
 		const inputs = page.locator('.syftbox-code-input')
 		await expect(inputs.first()).toHaveValue('')
 		await expect(page.locator('#verify-code-btn')).toBeDisabled()
+		const resendServerUrl = await page.evaluate(() => {
+			const w = /** @type {any} */ window
+			return w.__TEST_STATE__?.requestArgs?.[1]?.server_url
+		})
+		expect(resendServerUrl).toBe('https://dev.syftbox.net')
 
 		const nextOtp = await page.evaluate(() => {
 			const w = /** @type {any} */ window
