@@ -7682,9 +7682,9 @@ steps:${
 			// Clear cached context to force fresh read
 			flowState.pendingDataRun = null
 
-			// Navigate to flows tab
+			// Navigate to the Flows view before reading/rendering flow UI elements.
 			if (navigateTo) {
-				navigateTo('flows')
+				navigateTo('run')
 			}
 
 			// Wait for navigation and then show modal
@@ -7927,9 +7927,9 @@ steps:${
 
 		pendingFlowRequest = { datasetName, datasetOwner, dataset }
 
-		// Ensure we're on flows tab
+		// Ensure we're on the Flows view.
 		if (navigateTo) {
-			navigateTo('flows')
+			navigateTo('run')
 		}
 
 		// Load flows if not already loaded

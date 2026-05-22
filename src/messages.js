@@ -3125,7 +3125,7 @@ export function createMessagesModule({
 							if (runFlowById) {
 								await runFlowById(flow.id)
 							} else if (typeof window.navigateTo === 'function') {
-								window.navigateTo('flows')
+								window.navigateTo('run')
 							}
 						}
 
@@ -3162,7 +3162,7 @@ export function createMessagesModule({
 										flowId: flow.id,
 									})
 								} else if (typeof window.navigateTo === 'function') {
-									window.navigateTo('flows')
+									window.navigateTo('run')
 								}
 							}
 

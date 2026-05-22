@@ -2179,7 +2179,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 					dataType: selectedType,
 				}),
 			)
-			window.navigateTo('flows')
+			window.navigateTo('run')
 		}
 	}
 
