@@ -286,11 +286,11 @@ fn publish_flow_source_for_session(
 
 /// Get the step output path within a shared flow
 /// Structure: {flow_path}/{step_number}-{step_id}/
-fn get_step_path(flow_path: &PathBuf, step_number: usize, step_id: &str) -> PathBuf {
+fn get_step_path(flow_path: &Path, step_number: usize, step_id: &str) -> PathBuf {
     flow_path.join(format!("{}-{}", step_number, step_id))
 }
 
-fn get_padded_step_path(flow_path: &PathBuf, step_number: usize, step_id: &str) -> PathBuf {
+fn get_padded_step_path(flow_path: &Path, step_number: usize, step_id: &str) -> PathBuf {
     flow_path.join(format!("{:02}-{}", step_number, step_id))
 }
 
@@ -346,7 +346,7 @@ fn merge_directory_missing_entries(source_dir: &Path, target_dir: &Path) -> Resu
     Ok(())
 }
 
-fn canonicalize_step_dir_name(flow_path: &PathBuf, step_number: usize, step_id: &str) -> PathBuf {
+fn canonicalize_step_dir_name(flow_path: &Path, step_number: usize, step_id: &str) -> PathBuf {
     let canonical = get_step_path(flow_path, step_number, step_id);
     let padded = get_padded_step_path(flow_path, step_number, step_id);
 
@@ -405,7 +405,7 @@ fn has_step_share_marker(flow_dir: &Path, step_id: &str) -> bool {
 
 /// Get the progress path for coordination
 /// Structure: {flow_path}/_progress/
-fn get_progress_path(flow_path: &PathBuf) -> PathBuf {
+fn get_progress_path(flow_path: &Path) -> PathBuf {
     flow_path.join("_progress")
 }
 
@@ -432,7 +432,7 @@ fn append_private_step_log(session_id: &str, step_id: &str, message: &str) {
     let _ = writeln!(file, "{} {}", Utc::now().to_rfc3339(), message);
 }
 
-fn read_tail_lines(path: &PathBuf, lines: usize) -> Result<String, String> {
+fn read_tail_lines(path: &Path, lines: usize) -> Result<String, String> {
     if !path.exists() {
         return Ok(String::new());
     }
@@ -993,6 +993,7 @@ fn resolve_module_directory(
     None
 }
 
+#[allow(dead_code)]
 fn read_syqure_runner_config(module_dir: &Path) -> Result<(String, String, u64), String> {
     let module_yaml_path = if module_dir.join("module.yaml").exists() {
         module_dir.join("module.yaml")
@@ -1426,6 +1427,7 @@ fn canonical_syqure_party_order_from_participants(participants: &[FlowParticipan
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn audit_secure_aggregate_port_configuration(
     work_dir: &Path,
     flow_name: &str,
@@ -1991,6 +1993,7 @@ fn maybe_setup_mpc_channels(
     Ok(syqure_port_base)
 }
 
+#[allow(dead_code)]
 fn flow_has_hotlink_transport(flow_spec: &serde_json::Value) -> bool {
     let modules = flow_spec_root(flow_spec)
         .get("modules")
@@ -2017,6 +2020,7 @@ fn flow_has_hotlink_transport(flow_spec: &serde_json::Value) -> bool {
     false
 }
 
+#[allow(dead_code)]
 fn resolve_module_directory_from_flow_spec(source_path: &str) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     let biovault_home = match biovault::config::get_biovault_home() {
@@ -2083,6 +2087,7 @@ fn resolve_share_source_output(
     None
 }
 
+#[allow(clippy::too_many_arguments)]
 fn resolve_with_bindings(
     with_bindings: &HashMap<String, serde_json::Value>,
     input_overrides: &HashMap<String, String>,
@@ -2148,6 +2153,7 @@ fn resolve_with_bindings(
     Ok(step_args)
 }
 
+#[allow(dead_code, clippy::too_many_arguments)]
 fn precheck_step_binding_files_ready(
     with_bindings: &HashMap<String, serde_json::Value>,
     input_overrides: &HashMap<String, String>,
@@ -2281,6 +2287,7 @@ fn is_email_in_group(email: &str, group_name: &str, groups: &HashMap<String, Vec
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn resolve_single_binding(
     base_ref: &str,
     is_url_list: bool,
@@ -2485,7 +2492,7 @@ fn resolve_single_binding(
         let mut unresolved_targets = Vec::new();
         for target_email in &source_target_emails {
             if let Some(path) = find_participant_step_file(
-                &biovault_home.to_path_buf(),
+                biovault_home,
                 my_email,
                 target_email,
                 flow_name,
@@ -2531,7 +2538,7 @@ fn resolve_single_binding(
             my_email.to_string()
         };
         let path = find_participant_step_file(
-            &biovault_home.to_path_buf(),
+            biovault_home,
             my_email,
             &source_email,
             flow_name,
@@ -2551,8 +2558,9 @@ fn resolve_single_binding(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn find_participant_step_file(
-    biovault_home: &PathBuf,
+    biovault_home: &Path,
     viewer_email: &str,
     participant_email: &str,
     flow_name: &str,
@@ -2583,7 +2591,7 @@ fn find_participant_step_file(
     })
 }
 
-fn resolve_step_output_dir_by_id_any_number(base: &PathBuf, step_id: &str) -> Option<PathBuf> {
+fn resolve_step_output_dir_by_id_any_number(base: &Path, step_id: &str) -> Option<PathBuf> {
     let entries = fs::read_dir(base).ok()?;
     let mut best: Option<(usize, PathBuf)> = None;
     for entry in entries.flatten() {
@@ -2621,7 +2629,7 @@ fn find_sandbox_root(path: &Path) -> Option<PathBuf> {
 /// 1) synced datasite path (what this viewer has received)
 /// 2) optional local sandbox sibling path, only for the viewer's own datasite
 fn participant_flow_dirs_for_viewer(
-    biovault_home: &PathBuf,
+    biovault_home: &Path,
     viewer_email: &str,
     participant_email: &str,
     flow_name: &str,
@@ -2680,7 +2688,7 @@ fn participant_flow_dirs_for_viewer(
 }
 
 /// Append a log entry to progress.json (JSONL format for event streaming)
-fn append_progress_log(progress_dir: &PathBuf, event: &str, step_id: Option<&str>, role: &str) {
+fn append_progress_log(progress_dir: &Path, event: &str, step_id: Option<&str>, role: &str) {
     let timestamp = Utc::now().to_rfc3339();
     let log_entry = serde_json::json!({
         "timestamp": timestamp,
@@ -2713,7 +2721,7 @@ fn append_progress_log(progress_dir: &PathBuf, event: &str, step_id: Option<&str
 }
 
 fn write_progress_state(
-    progress_dir: &PathBuf,
+    progress_dir: &Path,
     role: &str,
     event: &str,
     step_id: Option<&str>,
@@ -2746,7 +2754,7 @@ fn write_progress_state(
 /// Merges new readers into any existing permission file so that sharing steps
 /// can widen access after a step initially creates owner-only permissions.
 fn create_syft_pub_yaml(
-    output_dir: &PathBuf,
+    output_dir: &Path,
     owner_email: &str,
     read_emails: &[String],
 ) -> Result<(), String> {
@@ -3598,6 +3606,7 @@ pub async fn send_flow_invitation(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn accept_flow_invitation(
     state: tauri::State<'_, AppState>,
     session_id: String,
@@ -3861,7 +3870,7 @@ fn parse_progress_timestamp(value: Option<&serde_json::Value>) -> Option<i64> {
 }
 
 fn resolve_step_output_dir_for_base(
-    base: &PathBuf,
+    base: &Path,
     step_number: usize,
     step_id: &str,
 ) -> Option<PathBuf> {
@@ -7072,10 +7081,11 @@ targets=[{}], unique_resolved={} of {}. {}",
     Ok(result)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn publish_step_outputs_message(
     session_id: &str,
     step_id: &str,
-    output_dir: &PathBuf,
+    output_dir: &Path,
     thread_id: &str,
     flow_name: &str,
     my_email: &str,

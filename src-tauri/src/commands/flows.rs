@@ -301,12 +301,24 @@ fn try_remove_lock_file(lock_path: &Path) -> bool {
         return true;
     }
 
-    // Try clearing readonly flag
+    // Try restoring owner-write permission before retrying removal.
     if let Ok(metadata) = fs::metadata(lock_path) {
         let mut perms = metadata.permissions();
-        perms.set_readonly(false);
-        if fs::set_permissions(lock_path, perms).is_ok() && fs::remove_file(lock_path).is_ok() {
-            return true;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = perms.mode();
+            perms.set_mode(mode | 0o200);
+            if fs::set_permissions(lock_path, perms).is_ok() && fs::remove_file(lock_path).is_ok() {
+                return true;
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            perms.set_readonly(false);
+            if fs::set_permissions(lock_path, perms).is_ok() && fs::remove_file(lock_path).is_ok() {
+                return true;
+            }
         }
     }
 
@@ -765,6 +777,7 @@ fn get_running_container_count() -> usize {
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn parse_flow_run_metadata(
     run: &Run,
 ) -> Result<
@@ -1240,17 +1253,121 @@ fn local_path_from_source(source: &FlowModuleSource) -> Option<String> {
     Some(".".to_string())
 }
 
-fn module_yaml_exists(module_root: &Path) -> bool {
+fn module_yaml_path(module_root: &Path) -> Option<PathBuf> {
     if module_root.is_file() {
         return module_root
             .file_name()
             .and_then(|n| n.to_str())
-            .is_some_and(|name| matches!(name, "module.yaml" | "module.yml"));
+            .filter(|name| matches!(*name, "module.yaml" | "module.yml"))
+            .map(|_| module_root.to_path_buf());
     }
-    module_root.join("module.yaml").exists() || module_root.join("module.yml").exists()
+    let yaml = module_root.join("module.yaml");
+    if yaml.exists() {
+        return Some(yaml);
+    }
+    let yml = module_root.join("module.yml");
+    if yml.exists() {
+        return Some(yml);
+    }
+    None
 }
 
-fn missing_local_module_paths(source_root: &Path, flow: &FlowFile) -> Vec<String> {
+fn module_required_files_missing(storage: &SyftBoxStorage, module_root: &Path) -> Vec<String> {
+    let Some(module_yaml) = module_yaml_path(module_root) else {
+        return vec!["module.yaml".to_string()];
+    };
+    if module_root.is_file() {
+        return Vec::new();
+    }
+
+    let Ok(bytes) = storage.read_with_shadow(&module_yaml) else {
+        return vec!["module.yaml".to_string()];
+    };
+    let Ok(contents) = String::from_utf8(bytes) else {
+        return vec!["module.yaml".to_string()];
+    };
+    let Ok(module_file) = serde_yaml::from_str::<ModuleFile>(&contents) else {
+        return vec!["module.yaml".to_string()];
+    };
+
+    let mut missing = Vec::new();
+    if let Some(entrypoint) = module_file
+        .spec
+        .runner
+        .as_ref()
+        .and_then(|runner| runner.entrypoint.as_ref())
+        .map(|entrypoint| entrypoint.trim())
+        .filter(|entrypoint| !entrypoint.is_empty())
+    {
+        let entrypoint_path = Path::new(entrypoint);
+        if !entrypoint_path.is_absolute() && !module_root.join(entrypoint_path).exists() {
+            missing.push(entrypoint.to_string());
+        }
+    }
+
+    if let Some(assets) = module_file.spec.assets.as_ref() {
+        for asset in assets {
+            let asset_path = asset.path.trim();
+            if asset_path.is_empty() {
+                continue;
+            }
+            let path = Path::new(asset_path);
+            if !path.is_absolute() && !module_root.join(path).exists() {
+                missing.push(asset_path.to_string());
+            }
+        }
+    }
+
+    missing
+}
+
+fn module_tree_complete(storage: &SyftBoxStorage, module_root: &Path) -> bool {
+    module_required_files_missing(storage, module_root).is_empty()
+}
+
+fn named_module_ref_exists(
+    storage: &SyftBoxStorage,
+    modules_root: &Path,
+    module_name: &str,
+) -> bool {
+    let trimmed = module_name.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with("http://")
+        || trimmed.starts_with("https://")
+        || trimmed.starts_with("syft://")
+        || trimmed.starts_with('.')
+        || trimmed.starts_with('/')
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+    {
+        return true;
+    }
+
+    if module_tree_complete(storage, &modules_root.join(trimmed)) {
+        return true;
+    }
+
+    let versioned_prefix = format!("{}-", trimmed);
+    let at_prefix = format!("{}@", trimmed);
+    let Ok(entries) = fs::read_dir(modules_root) else {
+        return false;
+    };
+
+    entries.flatten().any(|entry| {
+        let path = entry.path();
+        if !path.is_dir() || !module_tree_complete(storage, &path) {
+            return false;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        name == trimmed || name.starts_with(&versioned_prefix) || name.starts_with(&at_prefix)
+    })
+}
+
+fn missing_local_module_paths(
+    storage: &SyftBoxStorage,
+    source_root: &Path,
+    flow: &FlowFile,
+) -> Vec<String> {
     let mut paths: Vec<String> = Vec::new();
 
     for path in &flow.spec.module_paths {
@@ -1271,12 +1388,20 @@ fn missing_local_module_paths(source_root: &Path, flow: &FlowFile) -> Vec<String
     }
 
     for step in &flow.spec.steps {
-        if let Some(FlowStepUses::Ref(reference)) = step.uses.as_ref() {
-            if let Some(source) = reference.source.as_ref() {
-                if let Some(path) = local_path_from_source(source) {
-                    paths.push(path);
+        match step.uses.as_ref() {
+            Some(FlowStepUses::Name(name)) => {
+                if !named_module_ref_exists(storage, &source_root.join("modules"), name) {
+                    paths.push(format!("modules/{}", name.trim()));
                 }
             }
+            Some(FlowStepUses::Ref(reference)) => {
+                if let Some(source) = reference.source.as_ref() {
+                    if let Some(path) = local_path_from_source(source) {
+                        paths.push(path);
+                    }
+                }
+            }
+            None => {}
         }
     }
 
@@ -1299,7 +1424,7 @@ fn missing_local_module_paths(source_root: &Path, flow: &FlowFile) -> Vec<String
             source_root.join(candidate)
         };
 
-        if !full_path.exists() || !module_yaml_exists(&full_path) {
+        if !full_path.exists() || !module_tree_complete(storage, &full_path) {
             missing.push(raw);
         }
     }
@@ -1356,7 +1481,7 @@ pub async fn flow_request_sync_status(
     }
 
     let flow_file = load_flow_file_from_storage(&storage, &flow_yaml)?;
-    let missing_paths = missing_local_module_paths(&source_root, &flow_file);
+    let missing_paths = missing_local_module_paths(&storage, &source_root, &flow_file);
     let ready = missing_paths.is_empty();
     let reason = if ready {
         None
@@ -1999,6 +2124,7 @@ pub async fn validate_flow(flow_path: String) -> Result<FlowValidationResult, St
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn run_flow(
     state: tauri::State<'_, AppState>,
     window: tauri::WebviewWindow,
@@ -2025,6 +2151,7 @@ pub async fn run_flow(
 }
 
 /// Internal implementation that takes an optional window (for WS bridge mode)
+#[allow(clippy::too_many_arguments)]
 pub async fn run_flow_impl(
     state: tauri::State<'_, AppState>,
     window: Option<tauri::WebviewWindow>,
@@ -4018,6 +4145,31 @@ pub async fn import_flow_from_request(
         .map_err(|e| format!("Failed to create flows directory: {}", e))?;
 
     let dest_dir = flows_dir.join(&resolved_name);
+    let dest_dir_str = dest_dir.to_string_lossy().to_string();
+
+    let existing_flow = {
+        let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+        biovault_db
+            .list_flows()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|p| p.name == resolved_name || p.flow_path == dest_dir_str)
+    };
+
+    if let Some(existing) = existing_flow {
+        if !overwrite {
+            return Err(format!(
+                "Flow '{}' already exists at {}. Use overwrite to replace.",
+                resolved_name, existing.flow_path
+            ));
+        }
+
+        let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+        biovault_db
+            .delete_flow(existing.id)
+            .map_err(|e| e.to_string())?;
+    }
+
     if dest_dir.exists() {
         if overwrite {
             fs::remove_dir_all(&dest_dir)
@@ -4150,19 +4302,6 @@ pub async fn import_flow_from_request(
 
     let flow_dir_str = dest_dir.to_string_lossy().to_string();
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
-
-    if overwrite {
-        let existing = biovault_db
-            .list_flows()
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .find(|p| p.name == resolved_name || p.flow_path == flow_dir_str);
-        if let Some(existing_flow) = existing {
-            biovault_db
-                .delete_flow(existing_flow.id)
-                .map_err(|e| e.to_string())?;
-        }
-    }
 
     let id = biovault_db
         .register_flow(&resolved_name, &flow_dir_str)

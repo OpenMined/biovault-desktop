@@ -60,6 +60,17 @@ use once_cell::sync::Lazy;
 pub(crate) static PROFILE_LOCK: Lazy<Mutex<Option<commands::profiles::ProfileLock>>> =
     Lazy::new(|| Mutex::new(None));
 
+pub(crate) fn syqure_enabled() -> bool {
+    env::var("BIOVAULT_ENABLE_SYQURE")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
 pub(crate) fn resolve_biovault_home_path() -> PathBuf {
     if let Ok(home) = biovault::config::get_biovault_home() {
         return home;
@@ -563,137 +574,143 @@ fn expose_bundled_binaries(app: &tauri::App) {
         }
     }
 
-    // Expose bundled syqure as SEQURE_NATIVE_BIN (native runner).
-    // In installed macOS apps, prefer bundle resources and do not fall back to workspace paths.
-    #[cfg(target_os = "macos")]
-    let is_production = std::env::current_exe()
-        .map(|p| p.to_string_lossy().contains(".app/Contents/"))
-        .unwrap_or(false);
-    #[cfg(not(target_os = "macos"))]
-    let is_production = false;
-
-    let resource_root = app.path().resolve(".", BaseDirectory::Resource).ok();
-
-    let mut allow_syqure_override = true;
-    if let Ok(existing) = std::env::var("SEQURE_NATIVE_BIN") {
-        let existing = existing.trim().to_string();
-        if !existing.is_empty() {
-            let existing_path = std::path::PathBuf::from(&existing);
-            if existing_path.exists() {
-                let in_bundle_resources = resource_root
-                    .as_ref()
-                    .map(|root| existing_path.starts_with(root))
-                    .unwrap_or(false);
-                if is_production && !in_bundle_resources {
-                    crate::desktop_log!(
-                        "⚠️  Ignoring pre-set SEQURE_NATIVE_BIN outside app bundle in production: {}",
-                        existing
-                    );
-                } else {
-                    crate::desktop_log!("🔧 Using pre-set SEQURE_NATIVE_BIN: {}", existing);
-                    allow_syqure_override = false;
-                }
-            } else {
-                crate::desktop_log!(
-                    "⚠️  SEQURE_NATIVE_BIN was set to a missing path ({}); falling back to bundled candidates",
-                    existing_path.display()
-                );
-            }
-        }
-    }
-
-    if allow_syqure_override {
-        let syqure_candidates = [
-            "syqure/syqure".to_string(),
-            "resources/syqure/syqure".to_string(),
-        ];
-        let mut syqure_path = syqure_candidates
-            .iter()
-            .find_map(|path| app.path().resolve(path, BaseDirectory::Resource).ok())
-            .filter(|p| p.exists());
-
+    if !crate::syqure_enabled() {
+        std::env::remove_var("SEQURE_NATIVE_BIN");
+        std::env::remove_var("SYQURE_BINARY");
+        crate::desktop_log!("🔇 Syqure disabled; skipping bundled Syqure setup");
+    } else {
+        // Expose bundled syqure as SEQURE_NATIVE_BIN (native runner).
+        // In installed macOS apps, prefer bundle resources and do not fall back to workspace paths.
         #[cfg(target_os = "macos")]
-        if syqure_path.is_none() {
-            if let Ok(exe) = std::env::current_exe() {
-                if let Some(contents_dir) = exe.parent().and_then(|p| p.parent()) {
-                    let macos_bundle_path = contents_dir
-                        .join("Resources")
-                        .join("resources")
-                        .join("syqure")
-                        .join("syqure");
-                    if macos_bundle_path.exists() {
-                        syqure_path = Some(macos_bundle_path);
+        let is_production = std::env::current_exe()
+            .map(|p| p.to_string_lossy().contains(".app/Contents/"))
+            .unwrap_or(false);
+        #[cfg(not(target_os = "macos"))]
+        let is_production = false;
+
+        let resource_root = app.path().resolve(".", BaseDirectory::Resource).ok();
+
+        let mut allow_syqure_override = true;
+        if let Ok(existing) = std::env::var("SEQURE_NATIVE_BIN") {
+            let existing = existing.trim().to_string();
+            if !existing.is_empty() {
+                let existing_path = std::path::PathBuf::from(&existing);
+                if existing_path.exists() {
+                    let in_bundle_resources = resource_root
+                        .as_ref()
+                        .map(|root| existing_path.starts_with(root))
+                        .unwrap_or(false);
+                    if is_production && !in_bundle_resources {
+                        crate::desktop_log!(
+                            "⚠️  Ignoring pre-set SEQURE_NATIVE_BIN outside app bundle in production: {}",
+                            existing
+                        );
+                    } else {
+                        crate::desktop_log!("🔧 Using pre-set SEQURE_NATIVE_BIN: {}", existing);
+                        allow_syqure_override = false;
+                    }
+                } else {
+                    crate::desktop_log!(
+                        "⚠️  SEQURE_NATIVE_BIN was set to a missing path ({}); falling back to bundled candidates",
+                        existing_path.display()
+                    );
+                }
+            }
+        }
+
+        if allow_syqure_override {
+            let syqure_candidates = [
+                "syqure/syqure".to_string(),
+                "resources/syqure/syqure".to_string(),
+            ];
+            let mut syqure_path = syqure_candidates
+                .iter()
+                .find_map(|path| app.path().resolve(path, BaseDirectory::Resource).ok())
+                .filter(|p| p.exists());
+
+            #[cfg(target_os = "macos")]
+            if syqure_path.is_none() {
+                if let Ok(exe) = std::env::current_exe() {
+                    if let Some(contents_dir) = exe.parent().and_then(|p| p.parent()) {
+                        let macos_bundle_path = contents_dir
+                            .join("Resources")
+                            .join("resources")
+                            .join("syqure")
+                            .join("syqure");
+                        if macos_bundle_path.exists() {
+                            syqure_path = Some(macos_bundle_path);
+                        }
                     }
                 }
             }
-        }
 
-        if syqure_path.is_none() {
-            if let Ok(resource_dir) = app.path().resolve(".", BaseDirectory::Resource) {
-                let direct_candidates = [
-                    resource_dir.join("syqure").join("syqure"),
-                    resource_dir.join("resources").join("syqure").join("syqure"),
-                ];
-                for candidate in direct_candidates {
-                    if candidate.exists() {
-                        syqure_path = Some(candidate);
-                        break;
+            if syqure_path.is_none() {
+                if let Ok(resource_dir) = app.path().resolve(".", BaseDirectory::Resource) {
+                    let direct_candidates = [
+                        resource_dir.join("syqure").join("syqure"),
+                        resource_dir.join("resources").join("syqure").join("syqure"),
+                    ];
+                    for candidate in direct_candidates {
+                        if candidate.exists() {
+                            syqure_path = Some(candidate);
+                            break;
+                        }
                     }
                 }
             }
-        }
 
-        if syqure_path.is_none() {
-            if let Ok(resource_dir) = app.path().resolve(".", BaseDirectory::Resource) {
-                if let Some(found) = find_bundled_binary(&resource_dir, "syqure") {
-                    syqure_path = Some(found);
-                }
-            }
-        }
-
-        if !is_production && syqure_path.is_none() {
-            if let Ok(cwd) = std::env::current_dir() {
-                let dev_paths = [
-                    cwd.join("src-tauri")
-                        .join("resources")
-                        .join("syqure")
-                        .join("syqure"),
-                    cwd.join("resources").join("syqure").join("syqure"),
-                    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                        .join("resources")
-                        .join("syqure")
-                        .join("syqure"),
-                    cwd.join("syqure")
-                        .join("target")
-                        .join("release")
-                        .join("syqure"),
-                    cwd.join("..")
-                        .join("syqure")
-                        .join("target")
-                        .join("release")
-                        .join("syqure"),
-                    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                        .join("..")
-                        .join("syqure")
-                        .join("target")
-                        .join("release")
-                        .join("syqure"),
-                ];
-                for p in dev_paths {
-                    if p.exists() {
-                        syqure_path = Some(p);
-                        break;
+            if syqure_path.is_none() {
+                if let Ok(resource_dir) = app.path().resolve(".", BaseDirectory::Resource) {
+                    if let Some(found) = find_bundled_binary(&resource_dir, "syqure") {
+                        syqure_path = Some(found);
                     }
                 }
             }
-        }
 
-        if let Some(p) = syqure_path.filter(|p| p.exists()) {
-            let s = p.to_string_lossy().to_string();
-            std::env::set_var("SEQURE_NATIVE_BIN", &s);
-            crate::desktop_log!("🔧 Using bundled SEQURE_NATIVE_BIN: {}", s);
-        } else {
-            crate::desktop_log!("⚠️ Bundled syqure binary not found in resources");
+            if !is_production && syqure_path.is_none() {
+                if let Ok(cwd) = std::env::current_dir() {
+                    let dev_paths = [
+                        cwd.join("src-tauri")
+                            .join("resources")
+                            .join("syqure")
+                            .join("syqure"),
+                        cwd.join("resources").join("syqure").join("syqure"),
+                        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                            .join("resources")
+                            .join("syqure")
+                            .join("syqure"),
+                        cwd.join("syqure")
+                            .join("target")
+                            .join("release")
+                            .join("syqure"),
+                        cwd.join("..")
+                            .join("syqure")
+                            .join("target")
+                            .join("release")
+                            .join("syqure"),
+                        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                            .join("..")
+                            .join("syqure")
+                            .join("target")
+                            .join("release")
+                            .join("syqure"),
+                    ];
+                    for p in dev_paths {
+                        if p.exists() {
+                            syqure_path = Some(p);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if let Some(p) = syqure_path.filter(|p| p.exists()) {
+                let s = p.to_string_lossy().to_string();
+                std::env::set_var("SEQURE_NATIVE_BIN", &s);
+                crate::desktop_log!("🔧 Using bundled SEQURE_NATIVE_BIN: {}", s);
+            } else {
+                crate::desktop_log!("⚠️ Bundled syqure binary not found in resources");
+            }
         }
     }
 }
@@ -833,62 +850,66 @@ fn expose_bundled_binaries(app: &tauri::App) {
         }
     }
 
-    // Expose bundled syqure as SEQURE_NATIVE_BIN (native runner).
-    let mut allow_syqure_override = true;
-    if let Ok(existing) = std::env::var("SEQURE_NATIVE_BIN") {
-        let existing = existing.trim().to_string();
-        if !existing.is_empty() {
-            let existing_path = std::path::PathBuf::from(&existing);
-            if existing_path.exists() {
-                crate::desktop_log!("🔧 Using pre-set SEQURE_NATIVE_BIN: {}", existing);
-                allow_syqure_override = false;
-            } else {
-                crate::desktop_log!(
-                    "⚠️  SEQURE_NATIVE_BIN was set to a missing path ({}); falling back to bundled candidates",
-                    existing_path.display()
-                );
-            }
-        }
-    }
-
-    if !allow_syqure_override {
-        // Respect existing SEQURE_NATIVE_BIN if it's valid.
+    if !crate::syqure_enabled() {
+        std::env::remove_var("SEQURE_NATIVE_BIN");
+        std::env::remove_var("SYQURE_BINARY");
+        crate::desktop_log!("🔇 Syqure disabled; skipping bundled Syqure setup");
     } else {
-        let syqure_candidates = [
-            "syqure/syqure".to_string(),
-            "resources/syqure/syqure".to_string(),
-        ];
-        let mut syqure_path = syqure_candidates
-            .iter()
-            .find_map(|path| app.path().resolve(path, BaseDirectory::Resource).ok())
-            .filter(|p| p.exists());
-
-        if syqure_path.is_none() {
-            if let Ok(cwd) = std::env::current_dir() {
-                let dev_paths = [
-                    cwd.join("src-tauri")
-                        .join("resources")
-                        .join("syqure")
-                        .join("syqure"),
-                    cwd.join("resources").join("syqure").join("syqure"),
-                    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                        .join("resources")
-                        .join("syqure")
-                        .join("syqure"),
-                ];
-                for p in dev_paths {
-                    if p.exists() {
-                        syqure_path = Some(p);
-                        break;
-                    }
+        // Expose bundled syqure as SEQURE_NATIVE_BIN (native runner).
+        let mut allow_syqure_override = true;
+        if let Ok(existing) = std::env::var("SEQURE_NATIVE_BIN") {
+            let existing = existing.trim().to_string();
+            if !existing.is_empty() {
+                let existing_path = std::path::PathBuf::from(&existing);
+                if existing_path.exists() {
+                    crate::desktop_log!("🔧 Using pre-set SEQURE_NATIVE_BIN: {}", existing);
+                    allow_syqure_override = false;
+                } else {
+                    crate::desktop_log!(
+                        "⚠️  SEQURE_NATIVE_BIN was set to a missing path ({}); falling back to bundled candidates",
+                        existing_path.display()
+                    );
                 }
             }
         }
 
-        if let Some(p) = syqure_path.filter(|p| p.exists()) {
-            let s = p.to_string_lossy().to_string();
-            std::env::set_var("SEQURE_NATIVE_BIN", &s);
-            crate::desktop_log!("🔧 Using bundled SEQURE_NATIVE_BIN: {}", s);
+        if allow_syqure_override {
+            let syqure_candidates = [
+                "syqure/syqure".to_string(),
+                "resources/syqure/syqure".to_string(),
+            ];
+            let mut syqure_path = syqure_candidates
+                .iter()
+                .find_map(|path| app.path().resolve(path, BaseDirectory::Resource).ok())
+                .filter(|p| p.exists());
+
+            if syqure_path.is_none() {
+                if let Ok(cwd) = std::env::current_dir() {
+                    let dev_paths = [
+                        cwd.join("src-tauri")
+                            .join("resources")
+                            .join("syqure")
+                            .join("syqure"),
+                        cwd.join("resources").join("syqure").join("syqure"),
+                        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                            .join("resources")
+                            .join("syqure")
+                            .join("syqure"),
+                    ];
+                    for p in dev_paths {
+                        if p.exists() {
+                            syqure_path = Some(p);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if let Some(p) = syqure_path.filter(|p| p.exists()) {
+                let s = p.to_string_lossy().to_string();
+                std::env::set_var("SEQURE_NATIVE_BIN", &s);
+                crate::desktop_log!("🔧 Using bundled SEQURE_NATIVE_BIN: {}", s);
+            }
         }
     }
 
@@ -1188,12 +1209,7 @@ pub fn run() {
         None
     };
 
-    let (conn, queue_processor_paused) = if profile_picker_mode {
-        (
-            Connection::open_in_memory().expect("Could not open in-memory desktop database"),
-            Arc::new(AtomicBool::new(true)),
-        )
-    } else if db_init_error.is_some() {
+    let (conn, queue_processor_paused) = if profile_picker_mode || db_init_error.is_some() {
         (
             Connection::open_in_memory().expect("Could not open in-memory desktop database"),
             Arc::new(AtomicBool::new(true)),

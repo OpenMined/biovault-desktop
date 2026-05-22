@@ -367,6 +367,7 @@ fn get_commands_list() -> serde_json::Value {
         cmd_async("import_flow", "flows", false),
         cmd_async("import_flow_from_message", "flows", false),
         cmd_async("import_flow_from_request", "flows", false),
+        cmd_async("flow_request_sync_status", "flows", true),
         cmd_async("import_flow_from_json", "flows", false),
         cmd_long("import_flow_with_deps", "flows", false),
         cmd_long("run_flow", "flows", false),
@@ -2340,6 +2341,13 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             let datasites: Option<Vec<String>> = args
                 .get("datasites")
                 .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let thread_id: Option<String> = args
+                .get("threadId")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .or_else(|| {
+                    args.get("thread_id")
+                        .and_then(|v| serde_json::from_value(v.clone()).ok())
+                });
             let result = crate::send_flow_request(
                 flow_name,
                 flow_version,
@@ -2348,6 +2356,7 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
                 message,
                 run_id,
                 datasites,
+                thread_id,
             )
             .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
@@ -3090,6 +3099,19 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             )
             .await
             .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "flow_request_sync_status" => {
+            let flow_location: String = serde_json::from_value(
+                args.get("flowLocation")
+                    .cloned()
+                    .or_else(|| args.get("flow_location").cloned())
+                    .ok_or_else(|| "Missing flowLocation".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse flowLocation: {}", e))?;
+            let result = crate::commands::flows::flow_request_sync_status(flow_location)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "import_flow_from_json" => {

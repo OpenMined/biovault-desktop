@@ -200,6 +200,7 @@ const _proposeFlowModal = createProposeFlowModal({
 	dialog,
 	getCurrentUserEmail,
 	getThreadParticipants: () => messagesModule.getActiveThreadParticipants(),
+	getActiveThreadId: () => messagesModule.getActiveThreadId(),
 	sendMessage: (req) => messagesModule.sendMessageToRecipients(req),
 })
 

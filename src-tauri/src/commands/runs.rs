@@ -14,7 +14,9 @@ fn dependency_binaries() -> Vec<&'static str> {
     if !crate::syftbox_backend_is_embedded() {
         deps.push("syftbox");
     }
-    deps.push("syqure");
+    if crate::syqure_enabled() {
+        deps.push("syqure");
+    }
     deps.push("uv");
     deps
 }

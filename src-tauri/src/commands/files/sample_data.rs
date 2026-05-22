@@ -112,8 +112,10 @@ pub async fn fetch_sample_data(samples: Vec<String>) -> Result<SampleDataFetchRe
         let mut cache = biovault::cli::download_cache::DownloadCache::new(None)
             .map_err(|e| format!("Failed to initialize download cache: {}", e))?;
 
-        let mut options = biovault::cli::download_cache::DownloadOptions::default();
-        options.show_progress = false;
+        let options = biovault::cli::download_cache::DownloadOptions {
+            show_progress: false,
+            ..Default::default()
+        };
         cache
             .download_with_cache(dynamic_dna_url(), &target_path, options)
             .await
@@ -244,8 +246,10 @@ pub async fn fetch_sample_data_with_progress(
         let mut cache = biovault::cli::download_cache::DownloadCache::new(None)
             .map_err(|e| format!("Failed to initialize download cache: {}", e))?;
 
-        let mut options = biovault::cli::download_cache::DownloadOptions::default();
-        options.show_progress = false;
+        let options = biovault::cli::download_cache::DownloadOptions {
+            show_progress: false,
+            ..Default::default()
+        };
         cache
             .download_with_cache(
                 "https://raw.githubusercontent.com/OpenMined/biovault-data/main/snp/genotype_files/build_38/100001/100001_X_X_GSAv3-DTC_GRCh38-07-01-2025.txt",

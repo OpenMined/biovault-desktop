@@ -31,8 +31,8 @@ export function createDashboardShell({
 
 		let targetView = requestedView
 
-		// Redirect old 'modules' tab to 'run' (since they're now merged)
-		if (requestedView === 'modules') {
+		// Redirect old tab names to 'run' (since flows/modules are merged there).
+		if (requestedView === 'modules' || requestedView === 'flows') {
 			targetView = 'run'
 		}
 

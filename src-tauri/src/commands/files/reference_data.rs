@@ -40,8 +40,10 @@ async fn fetch_reference_data_internal(
     let mut cache = biovault::cli::download_cache::DownloadCache::new(None)
         .map_err(|e| format!("Failed to initialize download cache: {}", e))?;
 
-    let mut options = biovault::cli::download_cache::DownloadOptions::default();
-    options.show_progress = false;
+    let options = biovault::cli::download_cache::DownloadOptions {
+        show_progress: false,
+        ..Default::default()
+    };
 
     let make_reporter = |window: &tauri::WebviewWindow, label: &'static str| {
         let window = window.clone();

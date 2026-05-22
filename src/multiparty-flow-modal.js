@@ -451,6 +451,7 @@ export function createProposeFlowModal({
 	dialog,
 	getCurrentUserEmail,
 	getThreadParticipants,
+	getActiveThreadId,
 	sendMessage,
 }) {
 	let selectedFlow = null
@@ -731,6 +732,23 @@ export function createProposeFlowModal({
 	}
 
 	async function open() {
+		const currentUser = getCurrentUserEmail ? getCurrentUserEmail() : ''
+		const participants = getThreadParticipants ? getThreadParticipants() : []
+		const currentUserKey = String(currentUser || '')
+			.trim()
+			.toLowerCase()
+		const otherParticipants = participants.filter(
+			(email) =>
+				String(email || '').trim() &&
+				String(email || '')
+					.trim()
+					.toLowerCase() !== currentUserKey,
+		)
+		if (otherParticipants.length === 1) {
+			await openDirectFlowSend(otherParticipants[0])
+			return
+		}
+
 		const modal = document.getElementById('propose-flow-modal')
 		if (!modal) {
 			console.error('Propose flow modal not found')
@@ -756,6 +774,125 @@ export function createProposeFlowModal({
 
 		// Show modal
 		modal.style.display = 'flex'
+	}
+
+	async function openDirectFlowSend(recipient) {
+		let flows = []
+		try {
+			flows = await invoke('get_flows')
+		} catch (error) {
+			console.error('Failed to load flows for direct send:', error)
+			if (dialog?.message) {
+				await dialog.message(`Failed to load flows: ${error?.message || error}`, {
+					title: 'Flow Send Error',
+					type: 'error',
+				})
+			}
+			return
+		}
+
+		const normalFlows = (flows || []).filter((flow) => !isMultipartyFlow(flow))
+		if (normalFlows.length === 0) {
+			if (dialog?.message) {
+				await dialog.message('Create or import a normal flow before sending one in chat.', {
+					title: 'No Flows',
+					type: 'warning',
+				})
+			}
+			return
+		}
+
+		document.getElementById('direct-flow-send-modal')?.remove()
+		const modal = document.createElement('div')
+		modal.id = 'direct-flow-send-modal'
+		modal.className = 'modal-overlay'
+		modal.style.display = 'flex'
+		modal.innerHTML = `
+			<div class="modal-content" style="width: 560px; max-width: 92vw;">
+				<div class="modal-header">
+					<h3>Send Flow</h3>
+					<button class="modal-close" type="button" data-direct-flow-close aria-label="Close">×</button>
+				</div>
+				<div class="modal-body">
+					<p style="margin: 0 0 16px 0; color: var(--text-secondary);">
+						Send a flow to <strong>${escapeHtml(recipient)}</strong>. They can import it and choose what data to run it against.
+					</p>
+					<div class="form-group">
+						<label for="direct-flow-select">Flow</label>
+						<select id="direct-flow-select" class="form-control">
+							${normalFlows
+								.map((flow) => {
+									const name = flow.metadata?.name || flow.name || 'Unknown'
+									const version = flow.version || flow.metadata?.version || '1.0.0'
+									return `<option value="${escapeHtml(name)}">${escapeHtml(name)} (v${escapeHtml(version)})</option>`
+								})
+								.join('')}
+						</select>
+					</div>
+					<div class="form-group">
+						<label for="direct-flow-message">Message</label>
+						<textarea id="direct-flow-message" class="form-control" rows="3" placeholder="Optional message..."></textarea>
+					</div>
+				</div>
+				<div class="modal-footer">
+					<button class="btn btn-secondary" type="button" data-direct-flow-close>Cancel</button>
+					<button class="btn btn-primary" type="button" id="direct-flow-send-btn">
+						Send Flow
+					</button>
+				</div>
+			</div>
+		`
+		document.body.appendChild(modal)
+
+		const closeModal = () => modal.remove()
+		modal.querySelectorAll('[data-direct-flow-close]').forEach((button) => {
+			button.addEventListener('click', closeModal)
+		})
+
+		const sendBtn = modal.querySelector('#direct-flow-send-btn')
+		sendBtn?.addEventListener('click', async () => {
+			const flowName = modal.querySelector('#direct-flow-select')?.value
+			const flow = normalFlows.find((entry) => (entry.metadata?.name || entry.name) === flowName)
+			if (!flow) return
+
+			const message = modal.querySelector('#direct-flow-message')?.value?.trim() || ''
+			const defaultMessage = `I've sent you the "${flowName}" flow. Import it and choose what data to run it against.`
+			const threadId = getActiveThreadId ? getActiveThreadId() : null
+			try {
+				sendBtn.disabled = true
+				sendBtn.textContent = 'Sending...'
+				await invoke('send_flow_request', {
+					flowName,
+					flowVersion: flow.version || flow.metadata?.version || '1.0.0',
+					datasetName: '',
+					recipient,
+					message: message || defaultMessage,
+					threadId,
+				})
+				closeModal()
+				if (threadId && window.__messagesModule?.loadMessageThreads) {
+					await window.__messagesModule.loadMessageThreads(true)
+					window.__messagesModule.openThread?.(threadId)
+				}
+				if (dialog?.message) {
+					await dialog.message(`Flow sent to ${recipient}.`, {
+						title: 'Flow Sent',
+						type: 'info',
+					})
+				}
+			} catch (error) {
+				console.error('Failed to send flow:', error)
+				if (dialog?.message) {
+					await dialog.message(`Failed to send flow: ${error?.message || error}`, {
+						title: 'Flow Send Error',
+						type: 'error',
+					})
+				}
+			} finally {
+				sendBtn.disabled = false
+				sendBtn.textContent = 'Send Flow'
+			}
+		})
 	}
 
 	function close() {

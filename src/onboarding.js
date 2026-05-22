@@ -1634,16 +1634,32 @@ export function initOnboarding({
 		skipDepsBtn.addEventListener('click', async () => {
 			skipDepsBtn.disabled = true
 			try {
-				const confirmed = await dialog.confirm(
+				console.info('[onboarding] Skip dependency checks clicked')
+				const warningText =
 					'Warning: Skipping dependency checks may cause BioVault to not function properly.\n\n' +
-						'Some features may not work without the required dependencies installed.\n\n' +
-						'Are you sure you want to skip?',
-					{ title: 'Skip Dependency Checks?', type: 'warning' },
-				)
+					'Some features may not work without the required dependencies installed.\n\n' +
+					'Are you sure you want to skip?'
+				let confirmed = false
+				try {
+					confirmed = await Promise.race([
+						dialog.confirm(warningText, {
+							title: 'Skip Dependency Checks?',
+							type: 'warning',
+						}),
+						new Promise((_, reject) =>
+							setTimeout(() => reject(new Error('Skip confirmation timed out')), 5000),
+						),
+					])
+				} catch (error) {
+					console.error('[onboarding] Native skip confirmation failed:', error)
+					confirmed = window.confirm(warningText)
+				}
 
 				if (!confirmed) {
+					console.info('[onboarding] Skip dependency checks cancelled')
 					return
 				}
+				console.info('[onboarding] Skip dependency checks confirmed')
 
 				try {
 					// Dependency checks use longRunning timeout (180s) in tauri-shim.js

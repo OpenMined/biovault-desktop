@@ -1398,6 +1398,9 @@ fn record_control_plane_event(method: &str, url: &str, status: Option<u16>, erro
     match error {
         Some(err) => crate::desktop_log!("🛰️ {} {} -> error: {}", method, url, err),
         None => {
+            if url.contains("/v1/sync/status") {
+                return;
+            }
             if !should_log_control_plane_ok() {
                 return;
             }
