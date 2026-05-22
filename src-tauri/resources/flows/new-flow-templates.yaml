@@ -39,6 +39,14 @@ templates:
       - biovault/flows/allele-freq/flow.yaml
     url: https://github.com/OpenMined/biovault/blob/main/flows/allele-freq/flow.yaml
 
+  - id: example-facets
+    name: Example Facets
+    description: Test facet-aware participant grouping
+    color: "#16a34a"
+    local_paths:
+      - biovault/flows/example-facets/flow.yaml
+    url: https://github.com/OpenMined/biovault/blob/main/flows/example-facets/flow.yaml
+
   - id: gra-mpileup
     name: GRA mpileup
     description: Coverage and pileup metrics
@@ -62,11 +70,3 @@ templates:
     local_paths:
       - biovault/flows/eye-color/flow.yaml
     url: https://github.com/OpenMined/biovault/blob/main/flows/eye-color/flow.yaml
-
-  - id: syqure-smoke-test
-    name: Syqure Smoke Test
-    description: Quick secure-compute pipeline validation
-    color: "#334155"
-    local_paths:
-      - biovault/flows/syqure-smoke-test/flow.yaml
-    url: https://github.com/OpenMined/biovault/blob/main/flows/syqure-smoke-test/flow.yaml

@@ -112,14 +112,8 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 	}
 
 	const flowRuntimeDebugEnvKeys = [
-		'SEQURE_NATIVE_BIN',
-		'SYQURE_BINARY',
 		'CODON_PATH',
 		'CODON_PLUGIN_PATH',
-		'BV_SYQURE_TRANSPORT',
-		'BV_SYQURE_TCP_PROXY',
-		'BV_SYQURE_PORT_BASE',
-		'BV_SYQURE_NATIVE_TIMEOUT_S',
 		'SYFTBOX_HOTLINK',
 		'SYFTBOX_HOTLINK_TCP_PROXY',
 		'SYFTBOX_HOTLINK_ICE_SERVERS',
@@ -161,27 +155,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 		if (!envMap.CODON_PATH) {
 			entries.push({
 				key: 'CODON_PATH (effective)',
-				value: '<unset (runtime derives from syqure bundle when possible)>',
-			})
-		}
-
-		try {
-			const syqureDep = await invoke('check_single_dependency', {
-				name: 'syqure',
-				path: null,
-			})
-			entries.push({
-				key: 'syqure dependency path',
-				value: syqureDep?.path || '<not found>',
-			})
-			entries.push({
-				key: 'syqure dependency version',
-				value: syqureDep?.version || '<unknown>',
-			})
-		} catch (_error) {
-			entries.push({
-				key: 'syqure dependency path',
-				value: '<probe failed>',
+				value: '<unset>',
 			})
 		}
 
@@ -353,13 +327,6 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 					</div>
 					<h3 class="flow-card-title">${flow.name}</h3>
 				</div>
-				<button class="flow-card-menu" onclick="event.stopPropagation(); flowModule.showFlowMenu(${flow.id}, event)">
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-						<circle cx="12" cy="5" r="1"></circle>
-						<circle cx="12" cy="12" r="1"></circle>
-						<circle cx="12" cy="19" r="1"></circle>
-					</svg>
-				</button>
 			</div>
 			${dataBadge}
 			${description ? `<p class="flow-card-description">${description}</p>` : ''}
@@ -390,6 +357,21 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 							: `<span style="display: inline-block; padding: 3px 8px; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 4px; font-size: 11px; color: #64748b;">${stepCount} ${stepCount === 1 ? 'step' : 'steps'}</span>`
 					}
 				</div>
+				<div class="flow-card-actions">
+					<button class="flow-card-action-btn" data-action="open" data-flow-id="${flow.id}" title="Open flow folder">
+						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"></path>
+						</svg>
+						Open
+					</button>
+					<button class="flow-card-action-btn danger" data-action="delete" data-flow-id="${flow.id}" title="Delete flow">
+						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<polyline points="3 6 5 6 21 6"></polyline>
+							<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+						</svg>
+						Delete
+					</button>
+				</div>
 				${
 					canRunWithData
 						? `<button class="flow-run-data-btn" data-flow-id="${flow.id}" style="background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color: white; border: none; padding: 8px 16px; border-radius: 8px; font-weight: 600; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 6px rgba(37,99,235,0.3); white-space: nowrap; flex-shrink: 0;">
@@ -417,6 +399,17 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 				await handleFlowRunClick(flow.id)
 			})
 		}
+		card.querySelectorAll('.flow-card-action-btn').forEach((button) => {
+			button.addEventListener('click', async (event) => {
+				event.stopPropagation()
+				const action = button.dataset.action
+				if (action === 'open') {
+					await openFlowFolder(flow.flow_path)
+				} else if (action === 'delete') {
+					await deleteFlow(flow.id)
+				}
+			})
+		})
 	}
 
 	function refreshFlowCards() {
@@ -638,6 +631,21 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 		return context
 	}
 
+	function getRequestedDataRunFlowId() {
+		if (typeof sessionStorage === 'undefined') return null
+		const raw = sessionStorage.getItem('requestedDataRunFlowId')
+		const value = raw ? parseInt(raw, 10) : null
+		return Number.isFinite(value) ? value : null
+	}
+
+	function setRequestedDataRunFlowId(flowId) {
+		if (typeof sessionStorage === 'undefined') return
+		const value = parseInt(flowId, 10)
+		if (Number.isFinite(value)) {
+			sessionStorage.setItem('requestedDataRunFlowId', String(value))
+		}
+	}
+
 	function clearDataRunContext() {
 		flowState.pendingDataRun = null
 
@@ -660,6 +668,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			sessionStorage.removeItem('preselectedAssetKeys')
 			sessionStorage.removeItem('preselectedDataType')
 			sessionStorage.removeItem('preselectedDataSource')
+			sessionStorage.removeItem('requestedDataRunFlowId')
 		} catch (error) {
 			console.warn('Failed to clear preselected session data:', error)
 		}
@@ -836,7 +845,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 		const chooseBtn = banner.querySelector('[data-role="data-run-choose"]')
 		if (chooseBtn) {
 			chooseBtn.addEventListener('click', async () => {
-				await startDataDrivenRun(null).catch((error) => {
+				await startDataDrivenRun(getRequestedDataRunFlowId()).catch((error) => {
 					console.error('Failed to open flow selection modal:', error)
 				})
 			})
@@ -920,6 +929,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 		if (flowState.dataRunModalOpen) {
 			return true
 		}
+		const requestedFlowId = preselectedFlowId ?? getRequestedDataRunFlowId()
 
 		const context = getPendingDataRunContext()
 		logDataRunContext('startDataDrivenRun', context)
@@ -945,7 +955,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			return false
 		}
 
-		await showDataRunModal(context, eligibleFlows, preselectedFlowId)
+		await showDataRunModal(context, eligibleFlows, requestedFlowId)
 		return true
 	}
 
@@ -1032,8 +1042,31 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 		})
 	}
 
+	function withTimeout(promise, timeoutMs, errorMessage) {
+		let timeoutId
+		const timeoutPromise = new Promise((_, reject) => {
+			timeoutId = setTimeout(() => reject(new Error(errorMessage)), timeoutMs)
+		})
+		return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId))
+	}
+
+	async function checkDockerRunningForFlow() {
+		console.info('[flows] check_docker_running started')
+		const started = Date.now()
+		const running = await withTimeout(
+			invoke('check_docker_running'),
+			18000,
+			'Docker check timed out. Docker Desktop may be starting, stuck, or unavailable.',
+		)
+		console.info(`[flows] check_docker_running finished in ${Date.now() - started}ms`, {
+			running,
+		})
+		return running
+	}
+
 	// Public function to show modal directly (called from Data tab)
 	async function showDataRunModalDirect(preselectedFlowId = null) {
+		const requestedFlowId = preselectedFlowId ?? getRequestedDataRunFlowId()
 		const context = getPendingDataRunContext()
 		logDataRunContext('showDataRunModalDirect', context)
 		const hasData = hasPendingData(context)
@@ -1065,11 +1098,15 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			return false
 		}
 
-		await showDataRunModal(context, eligibleFlows, preselectedFlowId)
+		await showDataRunModal(context, eligibleFlows, requestedFlowId)
 		return true
 	}
 
 	async function handleFlowRunClick(flowId) {
+		setRequestedDataRunFlowId(flowId)
+		if (!flowState.flows || !flowState.flows.some((flow) => flow.id === flowId)) {
+			await loadFlows()
+		}
 		// Always use the new data-driven flow
 		const handled = await startDataDrivenRun(flowId)
 		if (!handled) {
@@ -1079,6 +1116,12 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			const flow = flowState.flows.find((p) => p.id === flowId)
 
 			if (!hasData) {
+				if (flowNeedsDataSelection(flow)) {
+					setRequestedDataRunFlowId(flowId)
+					await promptSelectDataForFlow()
+					return
+				}
+
 				if (flow && flow.spec?.inputs && Object.keys(flow.spec.inputs).length > 0) {
 					const overrides = await promptFlowInputOverridesFromData({
 						flowName: flow.name,
@@ -1116,22 +1159,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 				}
 
 				// No data selected - prompt user to select data first
-				if (dialog && dialog.confirm) {
-					const shouldNavigate = await dialog.confirm(
-						'No data selected. Would you like to go to the Data tab to select files before running this flow?',
-						{ title: 'Select Data First', type: 'info' },
-					)
-					if (shouldNavigate && navigateTo) {
-						navigateTo('data')
-					}
-				} else {
-					const shouldNavigate = confirm(
-						'No data selected. Would you like to go to the Data tab to select files before running this flow?',
-					)
-					if (shouldNavigate && navigateTo) {
-						navigateTo('data')
-					}
-				}
+				await promptSelectDataForFlow()
 			} else {
 				// Data is selected but flow might not be compatible
 				const selectionShape = context?.datasetShape || 'List[GenotypeRecord]'
@@ -1148,6 +1176,32 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 					}
 				}
 			}
+		}
+	}
+
+	function flowNeedsDataSelection(flow) {
+		const inputs = flow?.spec?.inputs || {}
+		return Object.values(inputs).some((inputSpec) => {
+			if (!isRequiredInputSpec(inputSpec)) return false
+			return isFileInputType(describeInputType(inputSpec))
+		})
+	}
+
+	async function promptSelectDataForFlow() {
+		if (dialog && dialog.confirm) {
+			const shouldNavigate = await dialog.confirm(
+				'Select files in the Data tab before running this flow.',
+				{ title: 'Select Data First', type: 'info' },
+			)
+			if (shouldNavigate && navigateTo) {
+				navigateTo('data')
+			}
+			return
+		}
+
+		const shouldNavigate = confirm('Select files in the Data tab before running this flow.')
+		if (shouldNavigate && navigateTo) {
+			navigateTo('data')
 		}
 	}
 
@@ -2459,7 +2513,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			runBtn.disabled = true
 			runBtn.textContent = 'Checking Docker…'
 			try {
-				const running = await invoke('check_docker_running')
+				const running = await checkDockerRunningForFlow()
 				if (running) {
 					await performRuns()
 				} else {
@@ -2468,7 +2522,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 					await showDockerWarningModal(performRuns)
 				}
 			} catch (err) {
-				console.warn('Docker check failed (continuing):', err)
+				console.warn('Docker check failed:', err)
 				runBtn.disabled = false
 				runBtn.textContent = 'Run Flow'
 				await showDockerWarningModal(performRuns)
@@ -2604,6 +2658,31 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 							Other Options
 						</h3>
 						<div style="display: flex; flex-direction: column; gap: 12px;">
+							<div style="background: #ffffff; border: 1.5px solid #dbeafe; border-radius: 12px; padding: 18px 20px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
+								<label for="flow-picker-url-input" style="display: block; margin-bottom: 10px; font-size: 14px; font-weight: 700; color: #0f172a;">
+									Import from GitHub
+								</label>
+								<div style="display: flex; gap: 10px; align-items: stretch;">
+									<input
+										type="text"
+										id="flow-picker-url-input"
+										placeholder="https://github.com/OpenMined/biovault/blob/main/cli/examples/flow/flow.yaml"
+										style="flex: 1; min-width: 0; padding: 11px 14px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 13px; box-sizing: border-box; font-family: 'SF Mono', Monaco, monospace; background: #ffffff; color: #0f172a; transition: all 0.2s;"
+									/>
+									<button
+										type="button"
+										id="flow-picker-url-import-btn"
+										style="padding: 10px 18px; background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); font-weight: 700; border-radius: 8px; color: white; border: none; cursor: pointer; display: flex; align-items: center; gap: 8px; white-space: nowrap; box-shadow: 0 2px 8px rgba(37,99,235,0.25);"
+									>
+										<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+											<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+											<polyline points="17 8 12 3 7 8"></polyline>
+											<line x1="12" y1="3" x2="12" y2="15"></line>
+										</svg>
+										Import
+									</button>
+								</div>
+							</div>
 							<button type="button" class="new-flow-option-card" onclick="flowModule.showImportOptions()" style="background: #ffffff; border: 1.5px solid #e2e8f0; border-radius: 12px; padding: 20px; cursor: pointer; text-align: left; display: flex; align-items: center; gap: 16px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);">
 								<div style="width: 44px; height: 44px; border-radius: 10px; background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
 									<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #475569;">
@@ -2634,6 +2713,25 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 					importTemplateFlow(templateId)
 				}
 			})
+		})
+
+		const pickerUrlInput = modal.querySelector('#flow-picker-url-input')
+		const pickerUrlImportBtn = modal.querySelector('#flow-picker-url-import-btn')
+		const importPickerUrl = () => {
+			const url = pickerUrlInput?.value?.trim() || ''
+			if (!url) {
+				alert('Please enter a GitHub URL')
+				pickerUrlInput?.focus()
+				return
+			}
+			submitFlowURL(false, url)
+		}
+		pickerUrlImportBtn?.addEventListener('click', importPickerUrl)
+		pickerUrlInput?.addEventListener('keydown', (event) => {
+			if (event.key === 'Enter') {
+				event.preventDefault()
+				importPickerUrl()
+			}
 		})
 
 		// Handle backdrop click and escape key
@@ -3092,6 +3190,14 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 		if (modal) modal.remove()
 	}
 
+	function closeFlowImportModals() {
+		closeFlowPickerModal()
+		closeImportOptionsModal()
+		closeURLInputModal()
+		const loadingModal = document.getElementById('flow-loading-modal')
+		if (loadingModal) loadingModal.remove()
+	}
+
 	async function cleanupExistingFlowByName(nameOrMsg) {
 		try {
 			const lower = nameOrMsg.toLowerCase()
@@ -3147,7 +3253,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 		}
 
 		try {
-			closeURLInputModal()
+			closeFlowImportModals()
 
 			// Call CLI function that imports flow AND all its step dependencies!
 			await invoke('import_flow_with_deps', {
@@ -3159,6 +3265,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			await loadFlows()
 
 			console.log('✅ Imported flow with all dependencies from URL:', url)
+			closeFlowImportModals()
 			alert('Flow and all its steps imported successfully!')
 		} catch (error) {
 			console.error('Error importing flow from URL:', error)
@@ -5587,6 +5694,7 @@ steps:${
 		window.flowModule = {
 			editFlow,
 			runFlow,
+			runFlowById: handleFlowRunClick,
 			openFlowFolder,
 			deleteFlow,
 			closeWizard,
@@ -7971,6 +8079,8 @@ steps:${
 		showFlowDetails,
 		backToFlowsList,
 		addModuleAsStep, // Expose for module creation to call
+		showDataRunModal: showDataRunModalDirect,
+		runFlowById: handleFlowRunClick,
 		openRunFlowWithDataset, // Expose for dataset "Run Flow" button
 		openRequestFlowRun, // Expose for network "Request Run" button
 	}

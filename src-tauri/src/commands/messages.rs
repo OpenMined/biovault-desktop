@@ -1110,6 +1110,7 @@ pub fn send_flow_request(
     message: String,
     run_id: Option<String>,
     datasites: Option<Vec<String>>,
+    thread_id: Option<String>,
 ) -> Result<VaultMessage, String> {
     let config = load_config()?;
     let (db, sync) = init_message_system(&config)
@@ -1277,8 +1278,13 @@ pub fn send_flow_request(
         }
     }));
 
-    // Use thread_id based on flow + dataset for grouping related messages
-    msg.thread_id = Some(format!("flow-{}:{}", flow_name, dataset_name));
+    // Dataset-originated requests keep their existing synthetic thread. Chat-originated
+    // requests can pass the active conversation id so the flow card stays in-place.
+    let thread_id = thread_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| format!("flow-{}:{}", flow_name, dataset_name));
+    msg.thread_id = Some(thread_id);
 
     // Insert and send
     db.insert_message(&msg)

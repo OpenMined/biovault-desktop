@@ -74,6 +74,40 @@ export function createMessagesModule({
 		return SENDER_COLORS[getSenderColorIndex(email)]
 	}
 
+	function formatErrorMessage(error) {
+		if (error === null || error === undefined) return 'Unknown error'
+		if (typeof error === 'string') return error
+		if (error instanceof Error) {
+			if (error.message && error.message !== '[object Object]') return error.message
+			if (error.cause) {
+				const cause = formatErrorMessage(error.cause)
+				if (cause && cause !== 'Unknown error object') return cause
+			}
+		}
+		if (typeof error === 'object') {
+			for (const key of ['message', 'error', 'reason', 'details']) {
+				const value = error[key]
+				if (typeof value === 'string' && value.trim() && value !== '[object Object]') {
+					return value
+				}
+				if (value && typeof value === 'object') {
+					const nested = formatErrorMessage(value)
+					if (nested && nested !== 'Unknown error' && nested !== 'Unknown error object') {
+						return nested
+					}
+				}
+			}
+			try {
+				const json = JSON.stringify(error)
+				if (json && json !== '{}') return json
+			} catch {
+				/* fall through */
+			}
+		}
+		const text = String(error)
+		return text === '[object Object]' ? 'Unknown error object' : text
+	}
+
 	function resolveParticipantIdentity(identity) {
 		const normalized = normalizeEmail(identity)
 		if (!normalized) return ''
@@ -2825,16 +2859,33 @@ export function createMessagesModule({
 					let runButtons = null
 					let joinBtn = null
 					let runSelect = null
+					let runSelectStatus = null
 					let runSelectOpenBtn = null
 					let runSelectSendBtn = null
+					let importBtn = null
+					let runChooseBtn = null
+					let latestMatchingFlow = null
 
 					const updateRunButtons = (flow) => {
+						latestMatchingFlow = flow || null
+						if (importBtn) {
+							importBtn.textContent = flow ? 'Reimport Flow' : 'Import Flow'
+						}
 						if (!runButtons) return
-						const enabled = Boolean(flow && flowRequest.dataset_name)
+						const enabled = Boolean(flow)
 						runButtons.flow = flow || null
-						runButtons.mock.disabled = !enabled
-						runButtons.real.disabled = !enabled
-						runButtons.both.disabled = !enabled
+						if (runButtons.choose) {
+							runButtons.choose.disabled = !enabled
+						}
+						if (runChooseBtn) {
+							runChooseBtn.style.display = flow ? '' : 'none'
+						}
+						if (runButtons.mock) {
+							const datasetEnabled = Boolean(flow && flowRequest.dataset_name)
+							runButtons.mock.disabled = !datasetEnabled
+							runButtons.real.disabled = !datasetEnabled
+							runButtons.both.disabled = !datasetEnabled
+						}
 						if (joinBtn) {
 							joinBtn.disabled = !(flow && flowRequest.run_id)
 						}
@@ -2856,7 +2907,11 @@ export function createMessagesModule({
 								runSelect.__runMap = null
 								runSelect.__flowRef = null
 								runSelect.innerHTML = '<option value="">Import flow first</option>'
-								runSelect.disabled = true
+								runSelect.style.display = 'none'
+								if (runSelectStatus) {
+									runSelectStatus.textContent = 'Import flow first'
+									runSelectStatus.style.display = ''
+								}
 								runSelectOpenBtn.style.display = 'none'
 								runSelectSendBtn.style.display = 'none'
 								return
@@ -2869,7 +2924,11 @@ export function createMessagesModule({
 								runSelect.__runMap = new Map()
 								runSelect.__flowRef = flow
 								runSelect.innerHTML = '<option value="">No completed runs yet</option>'
-								runSelect.disabled = true
+								runSelect.style.display = 'none'
+								if (runSelectStatus) {
+									runSelectStatus.textContent = 'No completed runs yet'
+									runSelectStatus.style.display = ''
+								}
 								runSelectOpenBtn.style.display = 'none'
 								runSelectSendBtn.style.display = 'none'
 								return
@@ -2883,6 +2942,11 @@ export function createMessagesModule({
 										`<option value="${run.id}">${escapeHtml(formatRunSelectionLabel(run))}</option>`,
 								)
 								.join('')
+							runSelect.style.display = ''
+							if (runSelectStatus) {
+								runSelectStatus.textContent = ''
+								runSelectStatus.style.display = 'none'
+							}
 							runSelect.disabled = false
 							runSelectOpenBtn.style.display = ''
 							runSelectSendBtn.style.display = ''
@@ -2899,45 +2963,52 @@ export function createMessagesModule({
 					const isRequestSender = emailsMatch(requestSender, currentUser)
 
 					if (!group.isOutgoing && !isRequestSender) {
-						const syncBtn = document.createElement('button')
-						syncBtn.className = 'secondary'
-						syncBtn.textContent = 'Sync Request'
-						syncBtn.addEventListener('click', async () => {
-							if (syncBtn.disabled) return
+						const flowRequestStatus = document.createElement('div')
+						flowRequestStatus.className = 'invite-meta'
+						flowRequestStatus.style.width = '100%'
+						flowRequestStatus.style.marginTop = '2px'
+						flowRequestStatus.style.display = 'none'
+
+						const waitForFlowRequestSync = async ({ statusEl, timeoutMs = 30000 }) => {
 							const targetPath = buildFlowRequestSubscriptionPath(flowRequest)
 							if (!targetPath) {
-								await dialog.message('Flow location not available for sync.', {
-									title: 'Sync Error',
-									type: 'error',
-								})
-								return
+								throw new Error('Flow location not available for sync.')
 							}
-							const originalText = syncBtn.textContent
-							syncBtn.disabled = true
-							syncBtn.textContent = 'Syncing…'
-							try {
-								await invoke('sync_tree_set_subscription', {
-									path: targetPath,
-									allow: true,
-									isDir: true,
-								})
-								await invoke('trigger_syftbox_sync')
-								syncBtn.textContent = 'Synced'
-							} catch (error) {
-								console.error('Failed to sync flow request:', error)
-								syncBtn.textContent = originalText
-								syncBtn.disabled = false
-								await dialog.message(`Failed to sync request: ${error?.message || error}`, {
-									title: 'Sync Error',
-									type: 'error',
-								})
-							}
-						})
-						actions.appendChild(syncBtn)
 
-						const importBtn = document.createElement('button')
+							statusEl.style.display = 'block'
+							statusEl.textContent = 'Syncing flow files...'
+							await invoke('sync_tree_set_subscription', {
+								path: targetPath,
+								allow: true,
+								isDir: true,
+							})
+							await invoke('trigger_syftbox_sync')
+
+							const started = Date.now()
+							let lastStatus = null
+							while (Date.now() - started < timeoutMs) {
+								lastStatus = await invoke('flow_request_sync_status', {
+									flowLocation: flowRequest.flow_location,
+								})
+								if (lastStatus?.ready) {
+									statusEl.textContent = 'Flow files synced.'
+									return lastStatus
+								}
+								statusEl.textContent = lastStatus?.reason || 'Waiting for flow files to sync...'
+								await new Promise((resolve) => setTimeout(resolve, 1200))
+							}
+							throw new Error(
+								lastStatus?.reason
+									? formatErrorMessage(lastStatus.reason)
+									: 'Timed out waiting for flow files to sync. Try again after SyftBox finishes syncing.',
+							)
+						}
+
+						importBtn = document.createElement('button')
 						importBtn.textContent = 'Import Flow'
 						importBtn.addEventListener('click', async () => {
+							if (importBtn.disabled) return
+							const originalText = importBtn.textContent
 							try {
 								if (!flowRequest.flow_location) {
 									await dialog.message('Flow folder not found in request', {
@@ -2947,27 +3018,65 @@ export function createMessagesModule({
 									return
 								}
 
-								await invoke('import_flow_from_request', {
-									name: flowRequest.flow_name,
-									flowLocation: flowRequest.flow_location,
-									overwrite: false,
-								})
+								importBtn.disabled = true
+								importBtn.textContent = 'Syncing...'
+								await waitForFlowRequestSync({ statusEl: flowRequestStatus })
 
-								await dialog.message(
-									`Flow "${flowRequest.flow_name}" imported successfully!\n\nGo to Flows tab to view and run it.`,
-									{ title: 'Flow Imported', type: 'info' },
-								)
+								importBtn.textContent = 'Importing...'
+								try {
+									await invoke('import_flow_from_request', {
+										name: flowRequest.flow_name,
+										flowLocation: flowRequest.flow_location,
+										overwrite: false,
+									})
+								} catch (error) {
+									const message = formatErrorMessage(error)
+									const isExistingFlow = /already exists/i.test(message)
+									if (!isExistingFlow) throw error
+
+									const overwrite = await confirm(
+										`Flow "${flowRequest.flow_name}" already exists. Replace your local copy with this shared version?`,
+										{
+											title: 'Replace Existing Flow?',
+											type: 'warning',
+										},
+									)
+									if (!overwrite) {
+										importBtn.disabled = false
+										importBtn.textContent = latestMatchingFlow ? 'Reimport Flow' : originalText
+										flowRequestStatus.style.display = 'block'
+										flowRequestStatus.textContent = 'Import cancelled.'
+										return
+									}
+
+									importBtn.textContent = 'Replacing...'
+									await invoke('import_flow_from_request', {
+										name: flowRequest.flow_name,
+										flowLocation: flowRequest.flow_location,
+										overwrite: true,
+									})
+								}
+
+								importBtn.textContent = 'Imported'
+								flowRequestStatus.style.display = 'block'
+								flowRequestStatus.textContent = `Flow "${flowRequest.flow_name}" is ready to run.`
 
 								await refreshFlowRequestActions()
 							} catch (error) {
 								console.error('Failed to import flow:', error)
-								await dialog.message('Failed to import flow: ' + (error?.message || error), {
+								const message = formatErrorMessage(error)
+								importBtn.disabled = false
+								importBtn.textContent = latestMatchingFlow ? 'Reimport Flow' : originalText
+								flowRequestStatus.style.display = 'block'
+								flowRequestStatus.textContent = `Import failed: ${message}`
+								await dialog.message(`Failed to import flow: ${message}`, {
 									title: 'Import Error',
 									type: 'error',
 								})
 							}
 						})
 						actions.appendChild(importBtn)
+						actions.appendChild(flowRequestStatus)
 					}
 
 					const openBtn = document.createElement('button')
@@ -2988,7 +3097,7 @@ export function createMessagesModule({
 							await invoke('open_folder', { path: folderPath })
 						} catch (error) {
 							console.error('Failed to open flow folder:', error)
-							await dialog.message(`Failed to open folder: ${error?.message || error}`, {
+							await dialog.message(`Failed to open folder: ${formatErrorMessage(error)}`, {
 								title: 'Open Folder Error',
 								type: 'error',
 							})
@@ -3002,23 +3111,7 @@ export function createMessagesModule({
 						runActions = document.createElement('div')
 						runActions.className = 'invite-actions'
 
-						const runMockBtn = document.createElement('button')
-						runMockBtn.textContent = 'Run Mock'
-						runMockBtn.className = 'secondary'
-						runMockBtn.disabled = true
-
-						const runRealBtn = document.createElement('button')
-						runRealBtn.textContent = 'Run Real'
-						runRealBtn.className = 'secondary'
-						runRealBtn.disabled = true
-
-						const runBothBtn = document.createElement('button')
-						runBothBtn.textContent = 'Run Both'
-						runBothBtn.disabled = true
-
-						runButtons = { mock: runMockBtn, real: runRealBtn, both: runBothBtn, flow: null }
-
-						const runWithType = async (dataType) => {
+						const runWithSelectedData = async () => {
 							const flow = runButtons?.flow
 							if (!flow) {
 								await dialog.message('Import the flow first before running.', {
@@ -3027,31 +3120,68 @@ export function createMessagesModule({
 								})
 								return
 							}
-							if (!flowRequest.dataset_name) {
-								await dialog.message('Dataset name missing from this request.', {
-									title: 'Missing Dataset',
-									type: 'error',
-								})
-								return
-							}
-							if (window.__flowsModule?.openRunFlowWithDataset) {
-								window.__flowsModule.openRunFlowWithDataset({
-									name: flowRequest.dataset_name,
-									dataType,
-									flowId: flow.id,
-								})
+							const runFlowById =
+								window.__flowsModule?.runFlowById || window.flowModule?.runFlowById
+							if (runFlowById) {
+								await runFlowById(flow.id)
 							} else if (typeof window.navigateTo === 'function') {
 								window.navigateTo('flows')
 							}
 						}
 
-						runMockBtn.addEventListener('click', () => runWithType('mock'))
-						runRealBtn.addEventListener('click', () => runWithType('real'))
-						runBothBtn.addEventListener('click', () => runWithType('both'))
+						if (flowRequest.dataset_name) {
+							const runMockBtn = document.createElement('button')
+							runMockBtn.textContent = 'Run Mock'
+							runMockBtn.className = 'secondary'
+							runMockBtn.disabled = true
 
-						runActions.appendChild(runMockBtn)
-						runActions.appendChild(runRealBtn)
-						runActions.appendChild(runBothBtn)
+							const runRealBtn = document.createElement('button')
+							runRealBtn.textContent = 'Run Real'
+							runRealBtn.className = 'secondary'
+							runRealBtn.disabled = true
+
+							const runBothBtn = document.createElement('button')
+							runBothBtn.textContent = 'Run Both'
+							runBothBtn.disabled = true
+
+							runButtons = { mock: runMockBtn, real: runRealBtn, both: runBothBtn, flow: null }
+
+							const runWithType = async (dataType) => {
+								const flow = runButtons?.flow
+								if (!flow) {
+									await dialog.message('Import the flow first before running.', {
+										title: 'Flow Required',
+										type: 'warning',
+									})
+									return
+								}
+								if (window.__flowsModule?.openRunFlowWithDataset) {
+									window.__flowsModule.openRunFlowWithDataset({
+										name: flowRequest.dataset_name,
+										dataType,
+										flowId: flow.id,
+									})
+								} else if (typeof window.navigateTo === 'function') {
+									window.navigateTo('flows')
+								}
+							}
+
+							runMockBtn.addEventListener('click', () => runWithType('mock'))
+							runRealBtn.addEventListener('click', () => runWithType('real'))
+							runBothBtn.addEventListener('click', () => runWithType('both'))
+
+							runActions.appendChild(runMockBtn)
+							runActions.appendChild(runRealBtn)
+							runActions.appendChild(runBothBtn)
+						} else {
+							runChooseBtn = document.createElement('button')
+							runChooseBtn.textContent = 'Run Flow'
+							runChooseBtn.disabled = true
+							runChooseBtn.style.display = 'none'
+							runButtons = { choose: runChooseBtn, flow: null }
+							runChooseBtn.addEventListener('click', runWithSelectedData)
+							runActions.appendChild(runChooseBtn)
+						}
 
 						if (flowRequest.run_id) {
 							joinBtn = document.createElement('button')
@@ -3067,7 +3197,7 @@ export function createMessagesModule({
 											await invoke('import_flow_from_request', {
 												name: flowRequest.flow_name,
 												flowLocation: flowRequest.flow_location,
-												overwrite: false,
+												overwrite: true,
 											})
 										}
 									} catch (error) {
@@ -3122,7 +3252,7 @@ export function createMessagesModule({
 									joinBtn.textContent = 'Join Run'
 									console.error('Failed to start collaborative run:', error)
 									await dialog.message(
-										`Failed to start collaborative run: ${error?.message || error}`,
+										`Failed to start collaborative run: ${formatErrorMessage(error)}`,
 										{ title: 'Run Error', type: 'error' },
 									)
 								}
@@ -3140,6 +3270,14 @@ export function createMessagesModule({
 						runSelect.style.flex = '1'
 						runSelect.innerHTML = '<option value="">Loading runs...</option>'
 						runSelect.disabled = true
+
+						runSelectStatus = document.createElement('div')
+						runSelectStatus.className = 'form-control'
+						runSelectStatus.textContent = 'Loading runs...'
+						runSelectStatus.style.flex = '1'
+						runSelectStatus.style.cursor = 'default'
+						runSelectStatus.style.background = '#f8fafc'
+						runSelectStatus.style.color = '#64748b'
 
 						runSelectOpenBtn = document.createElement('button')
 						runSelectOpenBtn.textContent = 'Show in Finder'
@@ -3163,7 +3301,7 @@ export function createMessagesModule({
 								await invoke('open_folder', { path })
 							} catch (error) {
 								console.error('Failed to open results folder:', error)
-								await dialog.message(`Failed to open folder: ${error?.message || error}`, {
+								await dialog.message(`Failed to open folder: ${formatErrorMessage(error)}`, {
 									title: 'Open Folder Error',
 									type: 'error',
 								})
@@ -3201,10 +3339,13 @@ export function createMessagesModule({
 							try {
 								treeEntries = await invoke('list_results_tree', { root: resultsDir })
 							} catch (error) {
-								await dialog.message(`Failed to load results folder: ${error?.message || error}`, {
-									title: 'Send Results Error',
-									type: 'error',
-								})
+								await dialog.message(
+									`Failed to load results folder: ${formatErrorMessage(error)}`,
+									{
+										title: 'Send Results Error',
+										type: 'error',
+									},
+								)
 								return
 							}
 
@@ -3405,7 +3546,7 @@ export function createMessagesModule({
 									closeModal()
 								} catch (error) {
 									console.error('Failed to send flow results:', error)
-									await dialog.message(`Failed to send results: ${error?.message || error}`, {
+									await dialog.message(`Failed to send results: ${formatErrorMessage(error)}`, {
 										title: 'Send Results Error',
 										type: 'error',
 									})
@@ -3416,6 +3557,7 @@ export function createMessagesModule({
 						})
 
 						resultsActions.appendChild(runSelect)
+						resultsActions.appendChild(runSelectStatus)
 						resultsActions.appendChild(runSelectOpenBtn)
 						resultsActions.appendChild(runSelectSendBtn)
 						requestCard.appendChild(resultsActions)
@@ -3495,7 +3637,7 @@ export function createMessagesModule({
 								await invoke('open_folder', { path: destPath })
 							} catch (error) {
 								console.error('Failed to import results:', error)
-								await dialog.message(`Failed to import results: ${error?.message || error}`, {
+								await dialog.message(`Failed to import results: ${formatErrorMessage(error)}`, {
 									title: 'Import Results Error',
 									type: 'error',
 								})
@@ -3538,7 +3680,7 @@ export function createMessagesModule({
 								})
 							} catch (error) {
 								console.error('Failed to save files:', error)
-								await dialog.message('Failed to save files: ' + (error?.message || error), {
+								await dialog.message('Failed to save files: ' + formatErrorMessage(error), {
 									title: 'Save Error',
 									type: 'error',
 								})
@@ -3788,7 +3930,7 @@ export function createMessagesModule({
 							}
 						} catch (error) {
 							console.error('Failed to sync flow files:', error)
-							if (statusEl) statusEl.textContent = `⚠ Sync failed: ${error}`
+							if (statusEl) statusEl.textContent = `⚠ Sync failed: ${formatErrorMessage(error)}`
 						} finally {
 							syncBtn.disabled = false
 							syncBtn.textContent = originalText
@@ -3828,7 +3970,9 @@ export function createMessagesModule({
 							if (statusEl) statusEl.textContent = '⚠ Could not locate flow files on disk.'
 						} catch (error) {
 							console.error('Failed to open flow files:', error)
-							if (statusEl) statusEl.textContent = `⚠ Failed to open flow files: ${error}`
+							if (statusEl) {
+								statusEl.textContent = `⚠ Failed to open flow files: ${formatErrorMessage(error)}`
+							}
 						}
 					})
 
@@ -3852,7 +3996,7 @@ export function createMessagesModule({
 							if (statusEl) statusEl.textContent = '✓ Flow imported'
 							importCompleted = true
 						} catch (error) {
-							const errText = String(error?.message || error || '')
+							const errText = formatErrorMessage(error)
 							const alreadyExists = /already exists/i.test(errText)
 							if (alreadyExists) {
 								let shouldOverwrite = false
@@ -3880,7 +4024,9 @@ export function createMessagesModule({
 										console.error('[Flow Import] Overwrite failed:', overwriteErr)
 										importBtn.disabled = false
 										importBtn.textContent = '📥 Import Flow'
-										if (statusEl) statusEl.textContent = `⚠ Import failed: ${overwriteErr}`
+										if (statusEl) {
+											statusEl.textContent = `⚠ Import failed: ${formatErrorMessage(overwriteErr)}`
+										}
 										return
 									}
 								}
@@ -3889,7 +4035,7 @@ export function createMessagesModule({
 							console.error('[Flow Import] Failed:', error)
 							importBtn.disabled = false
 							importBtn.textContent = '📥 Import Flow'
-							if (statusEl) statusEl.textContent = `⚠ Import failed: ${error}`
+							if (statusEl) statusEl.textContent = `⚠ Import failed: ${formatErrorMessage(error)}`
 						} finally {
 							if (!importCompleted) {
 								importBtn.disabled = false
@@ -3912,7 +4058,7 @@ export function createMessagesModule({
 									if (statusEl) statusEl.textContent = '✓ Flow available'
 								} catch (error) {
 									if (dialog?.message) {
-										await dialog.message(`Flow is missing locally: ${error}`, {
+										await dialog.message(`Flow is missing locally: ${formatErrorMessage(error)}`, {
 											title: 'Import Required',
 											kind: 'error',
 										})
@@ -3990,7 +4136,7 @@ export function createMessagesModule({
 							joinBtn.disabled = false
 							joinBtn.textContent = '🤝 Join Flow'
 							if (dialog?.message) {
-								await dialog.message(`Failed to join flow: ${error}`, {
+								await dialog.message(`Failed to join flow: ${formatErrorMessage(error)}`, {
 									title: 'Error',
 									kind: 'error',
 								})
@@ -4147,6 +4293,16 @@ export function createMessagesModule({
 		return otherParticipants.length > 1
 	}
 
+	function getActiveThreadId() {
+		return activeThreadId
+	}
+
+	function getOtherThreadParticipants() {
+		const participants = getActiveThreadParticipants()
+		const currentUser = getCurrentUserEmail()
+		return participants.filter((p) => !emailsMatch(p, currentUser))
+	}
+
 	async function sendMessageToRecipients({ recipients, body, subject, metadata }) {
 		if (!recipients || recipients.length === 0) {
 			throw new Error('No recipients specified')
@@ -4177,9 +4333,12 @@ export function createMessagesModule({
 		const btn = document.getElementById('propose-flow-btn')
 		if (!btn) return
 
-		// Show button only in group chats
-		if (isGroupThread() && activeThreadId && !isComposingNewMessage) {
+		const otherParticipants = getOtherThreadParticipants()
+		if (otherParticipants.length > 0 && activeThreadId && !isComposingNewMessage) {
 			btn.style.display = 'flex'
+			const isGroup = otherParticipants.length > 1
+			btn.title = isGroup ? 'Propose Multiparty Flow' : 'Send Flow'
+			btn.setAttribute('aria-label', btn.title)
 		} else {
 			btn.style.display = 'none'
 		}
@@ -4220,6 +4379,7 @@ export function createMessagesModule({
 		renderMessagesToContainer,
 		// Multiparty flow helpers
 		getActiveThreadParticipants,
+		getActiveThreadId,
 		isGroupThread,
 		sendMessageToRecipients,
 		updateProposeFlowButton,

@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -22,14 +22,48 @@ fn configure_child_process(cmd: &mut Command) {
 #[cfg(not(target_os = "windows"))]
 fn configure_child_process(_cmd: &mut Command) {}
 
+fn command_status_with_timeout(
+    cmd: &mut Command,
+    timeout: Duration,
+) -> std::io::Result<Option<ExitStatus>> {
+    let mut child = cmd.spawn()?;
+    let started = Instant::now();
+
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(Some(status));
+        }
+
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(None);
+        }
+
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 pub(crate) fn dependency_names() -> Vec<&'static str> {
     let mut deps = vec!["java", "docker", "nextflow"];
     if !crate::syftbox_backend_is_embedded() {
         deps.push("syftbox");
     }
-    deps.push("syqure");
+    if crate::syqure_enabled() {
+        deps.push("syqure");
+    }
     deps.push("uv");
     deps
+}
+
+fn apply_build_dependency_filters(check: &mut DependencyCheckResult) {
+    if !crate::syqure_enabled() {
+        check.dependencies.retain(|dep| dep.name != "syqure");
+    }
+    check.all_satisfied = check
+        .dependencies
+        .iter()
+        .all(|dep| dep.skipped || dep.found && dep.running.unwrap_or(true));
 }
 
 // Helper function to save dependency states (used by complete_onboarding in settings.rs)
@@ -39,7 +73,7 @@ pub fn save_dependency_states(biovault_path: &Path) -> Result<DependencyCheckRes
 
     // Check current dependency states
     eprintln!("DEBUG: About to call check_dependencies_result()");
-    let check_result = match biovault::cli::commands::check::check_dependencies_result() {
+    let mut check_result = match biovault::cli::commands::check::check_dependencies_result() {
         Ok(result) => {
             eprintln!(
                 "DEBUG: check_dependencies_result() returned OK with {} deps",
@@ -52,6 +86,7 @@ pub fn save_dependency_states(biovault_path: &Path) -> Result<DependencyCheckRes
             return Err(format!("Failed to check dependencies: {}", e));
         }
     };
+    apply_build_dependency_filters(&mut check_result);
 
     eprintln!(
         "DEBUG: Processing {} dependencies",
@@ -139,12 +174,49 @@ pub async fn check_dependencies() -> Result<DependencyCheckResult, String> {
     crate::desktop_log!("🔍 check_dependencies called");
 
     // Run in blocking thread pool since this calls subprocess checks (java, docker, etc.)
-    tokio::task::spawn_blocking(|| {
+    let started = Instant::now();
+    let result = tokio::task::spawn_blocking(|| {
         biovault::cli::commands::check::check_dependencies_result()
             .map_err(|e| format!("Failed to check dependencies: {}", e))
     })
     .await
-    .map_err(|e| format!("Task join error: {}", e))?
+    .map_err(|e| format!("Task join error: {}", e))?;
+
+    let result = result.map(|mut check| {
+        apply_build_dependency_filters(&mut check);
+        check
+    });
+
+    match &result {
+        Ok(check) => {
+            crate::desktop_log!(
+                "✅ check_dependencies completed in {:?}: {} deps, all_satisfied={}",
+                started.elapsed(),
+                check.dependencies.len(),
+                check.all_satisfied
+            );
+            for dep in &check.dependencies {
+                crate::desktop_log!(
+                    "  dependency {}: found={}, running={:?}, skipped={}, path={:?}, version={:?}",
+                    dep.name,
+                    dep.found,
+                    dep.running,
+                    dep.skipped,
+                    dep.path,
+                    dep.version
+                );
+            }
+        }
+        Err(err) => {
+            crate::desktop_error!(
+                "❌ check_dependencies failed after {:?}: {}",
+                started.elapsed(),
+                err
+            );
+        }
+    }
+
+    result
 }
 
 #[tauri::command]
@@ -157,6 +229,21 @@ pub async fn check_single_dependency(
         name,
         path
     );
+
+    if name == "syqure" && !crate::syqure_enabled() {
+        return Ok(biovault::cli::commands::check::DependencyResult {
+            name,
+            found: false,
+            path: None,
+            version: None,
+            running: None,
+            skipped: true,
+            skip_reason: Some("Syqure is disabled for this build".to_string()),
+            description: Some("Secure compute runtime".to_string()),
+            website: None,
+            install_instructions: None,
+        });
+    }
 
     // Run in blocking thread pool since this calls subprocess checks
     tokio::task::spawn_blocking(move || {
@@ -219,6 +306,7 @@ pub fn get_saved_dependency_states() -> Result<DependencyCheckResult, String> {
 
         let mut saved_result: DependencyCheckResult = serde_json::from_str(&json_str)
             .map_err(|e| format!("Failed to parse dependency states: {}", e))?;
+        apply_build_dependency_filters(&mut saved_result);
 
         // Fill missing paths from config (cheap operation, no subprocess calls)
         if let Ok(config) = biovault::config::Config::load() {
@@ -303,14 +391,18 @@ pub async fn check_docker_running() -> Result<bool, String> {
             cmd.stderr(Stdio::null());
             configure_child_process(&mut cmd);
 
-            match cmd.status() {
-                Ok(status) => {
+            match command_status_with_timeout(&mut cmd, Duration::from_secs(5)) {
+                Ok(Some(status)) => {
                     if status.success() {
                         crate::desktop_log!("Container runtime OK: {}", bin);
                         return Ok(true);
                     }
                     last_err = Some(format!("'{} info' returned {}", bin, status));
                     crate::desktop_log!("Container runtime not ready: {} (status {})", bin, status);
+                }
+                Ok(None) => {
+                    last_err = Some(format!("'{} info' timed out after 5s", bin));
+                    crate::desktop_log!("Container runtime check timed out: {}", bin);
                 }
                 Err(e) => {
                     last_err = Some(format!("Failed to execute '{}': {}", bin, e));

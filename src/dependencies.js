@@ -1,5 +1,15 @@
 export function createDependenciesModule({ invoke }) {
 	let dependencyResults = null
+	const DEPENDENCY_CHECK_TIMEOUT_MS = 70000
+
+	function withTimeout(promise, timeoutMs, errorMessage) {
+		let timeoutId
+		const timeoutPromise = new Promise((_, reject) => {
+			timeoutId = setTimeout(() => reject(new Error(errorMessage)), timeoutMs)
+		})
+
+		return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId))
+	}
 
 	async function loadSavedDependencies(listPanelId, detailsPanelId) {
 		const depsList = document.getElementById(listPanelId)
@@ -36,17 +46,31 @@ export function createDependenciesModule({ invoke }) {
 	`
 
 		try {
-			const result = await invoke('check_dependencies')
+			console.info('[dependencies] check_dependencies started')
+			const started = Date.now()
+			const result = await withTimeout(
+				invoke('check_dependencies'),
+				DEPENDENCY_CHECK_TIMEOUT_MS,
+				`Dependency check timed out after ${Math.round(
+					DEPENDENCY_CHECK_TIMEOUT_MS / 1000,
+				)} seconds. A system command such as Docker, Java, Nextflow, SyftBox, Syqure, or uv did not return.`,
+			)
+			console.info(
+				`[dependencies] check_dependencies finished in ${Date.now() - started}ms`,
+				result,
+			)
 			dependencyResults = result
 			if (typeof window.displayDependencies === 'function') {
 				window.displayDependencies(result, listPanelId, detailsPanelId, isSettings)
 			}
 		} catch (error) {
 			console.error('Failed to check dependencies:', error)
+			const message = error?.message || String(error)
 			depsList.innerHTML = `
 			<div style="color: #dc3545; padding: 20px; text-align: center;">
-				<p>❌ Failed to check dependencies</p>
-				<p style="font-size: 12px; margin-top: 10px;">${error}</p>
+				<p>Failed to check dependencies</p>
+				<p style="font-size: 12px; margin-top: 10px; line-height: 1.5;">${message}</p>
+				<p style="font-size: 11px; margin-top: 10px; color: #777;">Open Logs or DevTools for the full command output.</p>
 			</div>
 		`
 		}

@@ -287,12 +287,25 @@
 
 .flows-grid {
 	display: grid;
-	grid-template-columns: repeat(2, 1fr);
+	grid-template-columns: repeat(2, minmax(0, 1fr));
 	gap: 24px;
 	padding: 0px;
 	overflow-y: auto;
+	overflow-x: hidden;
 	flex: 1;
+	width: 100%;
+	max-width: 100%;
+	min-width: 0;
+	box-sizing: border-box;
 	background: #f8f9fa;
+}
+
+.flows-grid-container {
+	width: 100%;
+	max-width: 100%;
+	min-width: 0;
+	box-sizing: border-box;
+	overflow-x: hidden;
 }
 
 /* Flow Card */
@@ -306,6 +319,9 @@
 	display: flex;
 	flex-direction: column;
 	gap: 12px;
+	min-width: 0;
+	max-width: 100%;
+	box-sizing: border-box;
 	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
 
@@ -383,6 +399,45 @@
 	padding-top: 12px;
 	border-top: 1px solid #f3f4f6;
 	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.flow-card-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.flow-card-action-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 8px 10px;
+	border: 1px solid #cbd5e1;
+	border-radius: 8px;
+	background: #ffffff;
+	color: #334155;
+	font-size: 12px;
+	font-weight: 700;
+	line-height: 1;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.flow-card-action-btn:hover {
+	background: #f8fafc;
+	border-color: #94a3b8;
+}
+
+.flow-card-action-btn.danger {
+	color: #b91c1c;
+	border-color: #fecaca;
+}
+
+.flow-card-action-btn.danger:hover {
+	background: #fef2f2;
+	border-color: #fca5a5;
 }
 
 .flow-run-btn:hover {
@@ -696,9 +751,9 @@
 
 @media (max-width: 1024px) {
 	.flows-grid {
-		grid-template-columns: repeat(2, 1fr);
+		grid-template-columns: 1fr;
 		gap: 20px;
-		padding: 24px;
+		padding: 0;
 	}
 }
 
@@ -706,7 +761,7 @@
 	.flows-grid {
 		grid-template-columns: 1fr;
 		gap: 16px;
-		padding: 16px;
+		padding: 0;
 	}
 
 	.flows-grid-header {
