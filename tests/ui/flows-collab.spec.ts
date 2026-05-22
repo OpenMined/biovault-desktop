@@ -255,10 +255,12 @@ async function waitForSyncedFlowFolder(
 	})
 	const flowYaml = path.join(folderPath, 'flow.yaml')
 	let lastReason = ''
+	let statusChecked = false
 
 	while (Date.now() - start < timeoutMs) {
 		try {
 			const status = await backend.invoke('flow_request_sync_status', { flowLocation })
+			statusChecked = true
 			if (status?.ready) {
 				return folderPath
 			}
@@ -270,8 +272,9 @@ async function waitForSyncedFlowFolder(
 			lastReason = ''
 		}
 
-		// Fallback filesystem check: flow.yaml is sufficient when no extra module dirs are required.
-		if (fs.existsSync(flowYaml)) {
+		// Fallback filesystem check for older backends. Current backends report the
+		// full dependency status, including root modules that use `path: ./`.
+		if (!statusChecked && fs.existsSync(flowYaml)) {
 			const modulesDir = path.join(folderPath, 'modules')
 			const modulesReady =
 				!fs.existsSync(modulesDir) || (fs.readdirSync(modulesDir).length || 0) > 0
@@ -289,6 +292,49 @@ async function waitForSyncedFlowFolder(
 
 	const reasonSuffix = lastReason ? ` (last status: ${lastReason})` : ''
 	throw new Error(`Timed out waiting for flow sync at ${flowYaml}${reasonSuffix}`)
+}
+
+function senderLocalFlowFile(flowRequest: any): string | null {
+	const candidates = [flowRequest?.flow_spec?.flow_path, flowRequest?.sender_local_path]
+	for (const candidate of candidates) {
+		if (!candidate || typeof candidate !== 'string') {
+			continue
+		}
+		const flowYaml = path.join(candidate, 'flow.yaml')
+		if (fs.existsSync(flowYaml)) {
+			return flowYaml
+		}
+	}
+	return null
+}
+
+async function waitForImportedFlow(
+	backend: Backend,
+	flowName: string,
+	timeoutMs = SYNC_TIMEOUT,
+): Promise<any> {
+	const start = Date.now()
+	let lastFlows: string[] = []
+	while (Date.now() - start < timeoutMs) {
+		try {
+			const flows = await backend.invoke('get_flows', {})
+			lastFlows = (flows || []).map((flow: any) => {
+				const inputNames = Object.keys(flow?.spec?.inputs || {})
+				return `${flow?.name || '<unnamed>'}[inputs=${inputNames.join(',') || 'none'}]`
+			})
+			const flow = (flows || []).find((candidate: any) => candidate?.name === flowName)
+			if (flow) {
+				return flow
+			}
+		} catch (error) {
+			console.log(`Error checking imported flow: ${error}`)
+		}
+		await new Promise((r) => setTimeout(r, 1000))
+	}
+
+	throw new Error(
+		`Timed out waiting for imported flow "${flowName}". Last flows: ${lastFlows.join('; ') || 'none'}`,
+	)
 }
 
 // Helper to wait for flow run to complete
@@ -2123,16 +2169,39 @@ test.describe('Flows Collaboration @flows-collab', () => {
 				'herc2-classifier',
 				SYNC_TIMEOUT,
 			)
-			await waitForSyncedFlowFolder(backend1, flowRequestMeta, SYNC_TIMEOUT)
-			console.log('Flow request files synced to disk')
-
-			// Click Import Flow button if available
-			const importFlowBtn = requestCard.locator('button:has-text("Import Flow")')
-			if (await importFlowBtn.isVisible().catch(() => false)) {
-				await importFlowBtn.click()
-				await page1.waitForTimeout(2000)
-				console.log('Flow imported from request!')
+			let flowRequestSynced = false
+			try {
+				await waitForSyncedFlowFolder(backend1, flowRequestMeta, SYNC_TIMEOUT)
+				flowRequestSynced = true
+				console.log('Flow request files synced to disk')
+			} catch (error) {
+				const localFlowFile = senderLocalFlowFile(flowRequestMeta)
+				if (!localFlowFile) {
+					throw error
+				}
+				console.log(
+					`Flow request files did not fully sync; importing from local sender path: ${localFlowFile}`,
+				)
+				await backend1.invoke('import_flow', {
+					flowFile: localFlowFile,
+					overwrite: true,
+				})
 			}
+
+			// Click Import Flow button if the full shared request folder is available.
+			const importFlowBtn = requestCard.locator('button:has-text("Import Flow")')
+			if (flowRequestSynced && (await importFlowBtn.isVisible().catch(() => false))) {
+				await importFlowBtn.click()
+				const importedFlow = await waitForImportedFlow(
+					backend1,
+					'herc2-classifier',
+					SYNC_TIMEOUT,
+				)
+				console.log(
+					`Flow imported from request: ${importedFlow.name} (${Object.keys(importedFlow?.spec?.inputs || {}).join(',') || 'no inputs'})`,
+				)
+			}
+			await waitForImportedFlow(backend1, 'herc2-classifier', SYNC_TIMEOUT)
 
 			// ============================================================
 			// Step 8: Client1 runs flow on private data
