@@ -301,12 +301,24 @@ fn try_remove_lock_file(lock_path: &Path) -> bool {
         return true;
     }
 
-    // Try clearing readonly flag
+    // Try restoring owner-write permission before retrying removal.
     if let Ok(metadata) = fs::metadata(lock_path) {
         let mut perms = metadata.permissions();
-        perms.set_readonly(false);
-        if fs::set_permissions(lock_path, perms).is_ok() && fs::remove_file(lock_path).is_ok() {
-            return true;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = perms.mode();
+            perms.set_mode(mode | 0o200);
+            if fs::set_permissions(lock_path, perms).is_ok() && fs::remove_file(lock_path).is_ok() {
+                return true;
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            perms.set_readonly(false);
+            if fs::set_permissions(lock_path, perms).is_ok() && fs::remove_file(lock_path).is_ok() {
+                return true;
+            }
         }
     }
 
@@ -765,6 +777,7 @@ fn get_running_container_count() -> usize {
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn parse_flow_run_metadata(
     run: &Run,
 ) -> Result<
@@ -2111,6 +2124,7 @@ pub async fn validate_flow(flow_path: String) -> Result<FlowValidationResult, St
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn run_flow(
     state: tauri::State<'_, AppState>,
     window: tauri::WebviewWindow,
@@ -2137,6 +2151,7 @@ pub async fn run_flow(
 }
 
 /// Internal implementation that takes an optional window (for WS bridge mode)
+#[allow(clippy::too_many_arguments)]
 pub async fn run_flow_impl(
     state: tauri::State<'_, AppState>,
     window: Option<tauri::WebviewWindow>,

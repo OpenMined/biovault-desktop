@@ -1209,12 +1209,7 @@ pub fn run() {
         None
     };
 
-    let (conn, queue_processor_paused) = if profile_picker_mode {
-        (
-            Connection::open_in_memory().expect("Could not open in-memory desktop database"),
-            Arc::new(AtomicBool::new(true)),
-        )
-    } else if db_init_error.is_some() {
+    let (conn, queue_processor_paused) = if profile_picker_mode || db_init_error.is_some() {
         (
             Connection::open_in_memory().expect("Could not open in-memory desktop database"),
             Arc::new(AtomicBool::new(true)),

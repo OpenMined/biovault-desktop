@@ -1102,6 +1102,7 @@ pub fn sync_messages_with_failures() -> Result<SyncWithFailuresResult, String> {
 
 /// Send a flow request to a peer asking them to run it on their private data
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn send_flow_request(
     flow_name: String,
     flow_version: String,
