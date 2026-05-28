@@ -363,6 +363,8 @@ fn get_commands_list() -> serde_json::Value {
         cmd("get_flow_template_catalog", "modules", true),
         // Flows
         cmd_async("get_flows", "flows", true),
+        cmd_async("check_flow_updates", "flows", true),
+        cmd_long("redownload_flow", "flows", false),
         cmd_async("create_flow", "flows", false),
         cmd_async("import_flow", "flows", false),
         cmd_async("import_flow_from_message", "flows", false),
@@ -3017,6 +3019,25 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
         }
         "get_flow_runs" => {
             let result = crate::commands::flows::get_flow_runs(state.clone())
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "check_flow_updates" => {
+            let result = crate::commands::flows::check_flow_updates(state.clone())
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "redownload_flow" => {
+            let flow_id: i64 = serde_json::from_value(
+                args.get("flowId")
+                    .or_else(|| args.get("flow_id"))
+                    .cloned()
+                    .ok_or_else(|| "Missing flowId".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse flowId: {}", e))?;
+            let result = crate::commands::flows::redownload_flow(state.clone(), flow_id)
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())

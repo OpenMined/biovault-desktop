@@ -40,6 +40,49 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 		lastAutoOpenKey: null,
 	}
 
+	const biovaultPopgenFlowTemplates = [
+		{
+			id: 'bv-popgen-qc-all-files',
+			name: '00 QC All Files',
+			description: 'Preflight QC for every selected genotype file',
+			color: '#f59e0b',
+			source:
+				'https://github.com/madhavajay/BioVault_popgen/blob/main/flows/00_bv_paper_qc_all_files/flow.yaml',
+		},
+		{
+			id: 'bv-popgen-pca-qc-fast',
+			name: '01 PCA QC Fast',
+			description: 'Paper PCA/QC workflow',
+			color: '#7c3aed',
+			source:
+				'https://github.com/madhavajay/BioVault_popgen/blob/main/flows/01_bv_paper_pca_qc_fast/flow.yaml',
+		},
+		{
+			id: 'bv-popgen-gnomad-projection-fast',
+			name: '02 gnomAD Projection Fast',
+			description: 'Project samples against gnomAD references',
+			color: '#0ea5e9',
+			source:
+				'https://github.com/madhavajay/BioVault_popgen/blob/main/flows/02_bv_paper_gnomad_projection_fast/flow.yaml',
+		},
+		{
+			id: 'bv-popgen-sex-biased-admixture-fast',
+			name: '03 Sex Biased Admixture Fast',
+			description: 'Sex-biased ancestry/admixture analysis',
+			color: '#db2777',
+			source:
+				'https://github.com/madhavajay/BioVault_popgen/blob/main/flows/03_bv_paper_sex_biased_admixture_fast/flow.yaml',
+		},
+		{
+			id: 'bv-popgen-population-level',
+			name: '04 Population Level',
+			description: 'Population-level summary workflow',
+			color: '#059669',
+			source:
+				'https://github.com/madhavajay/BioVault_popgen/blob/main/flows/04_bv_paper_population_level/flow.yaml',
+		},
+	]
+
 	async function getFlowTemplateCatalog(forceRefresh = false) {
 		if (!forceRefresh && Array.isArray(flowState.templateCatalog)) {
 			return flowState.templateCatalog
@@ -47,6 +90,15 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 		const catalog = await invoke('get_flow_template_catalog')
 		flowState.templateCatalog = Array.isArray(catalog) ? catalog : []
 		return flowState.templateCatalog
+	}
+
+	async function getAllFlowTemplates(forceRefresh = false) {
+		const catalog = await getFlowTemplateCatalog(forceRefresh)
+		const existingIds = new Set((catalog || []).map((entry) => entry.id))
+		return [
+			...(catalog || []),
+			...biovaultPopgenFlowTemplates.filter((entry) => !existingIds.has(entry.id)),
+		]
 	}
 
 	function renderTemplateFlowCards(templates) {
@@ -280,6 +332,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 		const canRunWithData = hasDataSelected && flowAcceptsShape(flow, context?.datasetShape || null)
 
 		const flowVersion = flow.version || flow.spec?.metadata?.version || null
+		const sourceUrl = flow.sourceUrl || flow.source_url || null
 		const flowInputs = flow.spec?.inputs || {}
 		const inputEntries = Object.entries(flowInputs)
 
@@ -332,6 +385,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 			${description ? `<p class="flow-card-description">${description}</p>` : ''}
 			<div style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
 				${flowVersion ? `<span style="padding: 2px 8px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 4px; font-size: 11px; color: #1d4ed8; font-weight: 600;">v${flowVersion}</span>` : ''}
+				${sourceUrl ? `<span style="padding: 2px 8px; background: #ecfdf5; border: 1px solid #bbf7d0; border-radius: 4px; font-size: 11px; color: #047857; font-weight: 600;" title="${escapeHtml(sourceUrl)}">downloaded</span>` : ''}
 				${inputEntries
 					.map(([name, spec]) => {
 						const inputType =
@@ -364,6 +418,18 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 						</svg>
 						Open
 					</button>
+					${
+						sourceUrl
+							? `<button class="flow-card-action-btn" data-action="redownload" data-flow-id="${flow.id}" title="Redownload from source URL">
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+									<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+									<polyline points="7 10 12 15 17 10"></polyline>
+									<line x1="12" y1="15" x2="12" y2="3"></line>
+								</svg>
+								Redownload
+							</button>`
+							: ''
+					}
 					<button class="flow-card-action-btn danger" data-action="delete" data-flow-id="${flow.id}" title="Delete flow">
 						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 							<polyline points="3 6 5 6 21 6"></polyline>
@@ -405,6 +471,8 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 				const action = button.dataset.action
 				if (action === 'open') {
 					await openFlowFolder(flow.flow_path)
+				} else if (action === 'redownload') {
+					await redownloadFlow(flow.id)
 				} else if (action === 'delete') {
 					await deleteFlow(flow.id)
 				}
@@ -2538,7 +2606,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 	async function showTemplateFlowPicker() {
 		let templateCatalog = []
 		try {
-			templateCatalog = await getFlowTemplateCatalog()
+			templateCatalog = await getAllFlowTemplates()
 		} catch (error) {
 			console.error('Failed to load flow template catalog:', error)
 		}
@@ -2863,7 +2931,7 @@ export function createFlowsModule({ invoke, dialog, open: _open, navigateTo, ope
 
 	async function importTemplateFlow(templateName) {
 		closeFlowPickerModal()
-		const templateCatalog = await getFlowTemplateCatalog()
+		const templateCatalog = await getAllFlowTemplates()
 		const template = templateCatalog.find((entry) => entry.id === templateName)
 		if (!template || !template.source) {
 			alert('Invalid template selected')
@@ -5474,6 +5542,191 @@ steps:${
 		}
 	}
 
+	async function redownloadFlow(flowId) {
+		const flow = flowState.flows.find((p) => p.id === flowId)
+		const flowName = flow?.name || 'this flow'
+		const confirmed = await confirmWithDialog(
+			`Redownload "${flowName}" from its source URL and replace the local flow/module files?`,
+			{ title: 'Redownload Flow', type: 'warning' },
+		)
+		if (!confirmed) return
+
+		try {
+			await invoke('redownload_flow', { flowId })
+			await loadFlows()
+			alert(`Redownloaded "${flowName}".`)
+		} catch (error) {
+			console.error('Failed to redownload flow:', error)
+			alert('Failed to redownload flow: ' + (error?.message || error))
+		}
+	}
+
+	function describeFlowUpdate(entry) {
+		if (entry.updateAvailable) {
+			return { label: 'Newer', color: '#047857', background: '#d1fae5' }
+		}
+		if (entry.error) {
+			return { label: 'Check failed', color: '#b45309', background: '#fef3c7' }
+		}
+		if (entry.remoteVersion && (entry.currentVersion || '') !== (entry.remoteVersion || '')) {
+			return { label: 'Different', color: '#7c3aed', background: '#f3e8ff' }
+		}
+		return { label: 'Current', color: '#475569', background: '#f1f5f9' }
+	}
+
+	function showFlowUpdateSelectionModal(entries) {
+		return new Promise((resolve) => {
+			const existing = document.getElementById('flow-update-modal')
+			if (existing) existing.remove()
+
+			const modal = document.createElement('div')
+			modal.id = 'flow-update-modal'
+			modal.className = 'modal flow-update-modal'
+			modal.setAttribute('role', 'dialog')
+			modal.setAttribute('aria-modal', 'true')
+			modal.style.cssText =
+				'position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center;'
+
+			const rows = entries
+				.map((entry) => {
+					const status = describeFlowUpdate(entry)
+					const checked = entry.updateAvailable ? 'checked' : ''
+					const current = entry.currentVersion || 'unknown'
+					const remote = entry.remoteVersion || (entry.error ? 'unknown' : current)
+					const note = entry.error
+						? entry.error
+						: entry.updateAvailable
+							? 'Remote version is newer and selected by default.'
+							: entry.remoteVersion && (entry.currentVersion || '') !== (entry.remoteVersion || '')
+								? 'Remote version differs but is not newer. Select to force overwrite.'
+								: 'Versions match. Select to force overwrite.'
+					return `
+						<label class="flow-update-row" style="display: grid; grid-template-columns: 32px minmax(0, 1.4fr) minmax(86px, 0.5fr) minmax(28px, 36px) minmax(86px, 0.5fr) minmax(92px, auto); gap: 12px; align-items: center; padding: 14px 16px; border: 1px solid #e2e8f0; border-radius: 10px; background: #ffffff; cursor: pointer;">
+							<input type="checkbox" class="flow-update-checkbox" data-flow-id="${entry.flowId}" ${checked} style="width: 18px; height: 18px; accent-color: #10b981;">
+							<div style="min-width: 0;">
+								<div style="font-weight: 700; color: #0f172a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(entry.name || 'Unnamed flow')}</div>
+								<div style="font-size: 12px; color: #64748b; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(note)}">${escapeHtml(note)}</div>
+							</div>
+							<div style="font-family: 'SF Mono', Monaco, monospace; font-size: 13px; color: #334155; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 7px; padding: 7px 9px; text-align: center;">${escapeHtml(current)}</div>
+							<div style="text-align: center; color: #94a3b8; font-weight: 800;">→</div>
+							<div style="font-family: 'SF Mono', Monaco, monospace; font-size: 13px; color: #334155; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 7px; padding: 7px 9px; text-align: center;">${escapeHtml(remote)}</div>
+							<div style="font-size: 12px; font-weight: 800; color: ${status.color}; background: ${status.background}; border-radius: 999px; padding: 6px 9px; text-align: center; white-space: nowrap;">${status.label}</div>
+						</label>
+					`
+				})
+				.join('')
+
+			modal.innerHTML = `
+				<div class="modal-backdrop" style="position: absolute; inset: 0; background: rgba(15, 23, 42, 0.45); backdrop-filter: blur(6px);"></div>
+				<div style="position: relative; width: min(980px, 94vw); max-height: 88vh; background: #ffffff; border-radius: 16px; box-shadow: 0 24px 70px rgba(15, 23, 42, 0.35); display: flex; flex-direction: column; overflow: hidden;">
+					<div style="padding: 22px 26px; border-bottom: 1px solid #e2e8f0; display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+						<div>
+							<h2 style="margin: 0; font-size: 22px; color: #0f172a; font-weight: 800;">Update Flows</h2>
+							<p style="margin: 7px 0 0; color: #64748b; font-size: 14px;">Select the flows to redownload. Newer remote versions are checked automatically.</p>
+						</div>
+						<button type="button" id="flow-update-close" aria-label="Close" style="width: 36px; height: 36px; border: 0; border-radius: 8px; background: #f8fafc; color: #475569; cursor: pointer; font-size: 22px; line-height: 1;">×</button>
+					</div>
+					<div style="padding: 18px 26px 22px; overflow: auto;">
+						<div style="display: grid; grid-template-columns: 32px minmax(0, 1.4fr) minmax(86px, 0.5fr) minmax(28px, 36px) minmax(86px, 0.5fr) minmax(92px, auto); gap: 12px; padding: 0 16px 8px; color: #64748b; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em;">
+							<div></div>
+							<div>Flow</div>
+							<div style="text-align: center;">Local</div>
+							<div></div>
+							<div style="text-align: center;">Remote</div>
+							<div style="text-align: center;">Status</div>
+						</div>
+						<div style="display: flex; flex-direction: column; gap: 10px;">${rows}</div>
+					</div>
+					<div style="padding: 18px 26px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; gap: 12px; background: #f8fafc;">
+						<div style="display: flex; gap: 8px;">
+							<button type="button" id="flow-update-select-newer" style="padding: 10px 14px; border-radius: 8px; border: 1px solid #cbd5e1; background: #ffffff; color: #334155; font-weight: 700; cursor: pointer;">Select Newer</button>
+							<button type="button" id="flow-update-select-all" style="padding: 10px 14px; border-radius: 8px; border: 1px solid #cbd5e1; background: #ffffff; color: #334155; font-weight: 700; cursor: pointer;">Select All</button>
+						</div>
+						<div style="display: flex; gap: 10px;">
+							<button type="button" id="flow-update-cancel" style="padding: 10px 18px; border-radius: 8px; border: 1px solid #cbd5e1; background: #ffffff; color: #475569; font-weight: 700; cursor: pointer;">Cancel</button>
+							<button type="button" id="flow-update-apply" style="padding: 10px 18px; border-radius: 8px; border: 0; background: #10b981; color: #ffffff; font-weight: 800; cursor: pointer;">Redownload Selected</button>
+						</div>
+					</div>
+				</div>
+			`
+
+			document.body.appendChild(modal)
+
+			const close = (value) => {
+				modal.remove()
+				resolve(value)
+			}
+			const selectedEntries = () => {
+				const selectedIds = new Set(
+					Array.from(modal.querySelectorAll('.flow-update-checkbox:checked')).map((input) =>
+						Number.parseInt(input.dataset.flowId, 10),
+					),
+				)
+				return entries.filter((entry) => selectedIds.has(entry.flowId))
+			}
+
+			modal.querySelector('.modal-backdrop')?.addEventListener('click', () => close(null))
+			modal.querySelector('#flow-update-close')?.addEventListener('click', () => close(null))
+			modal.querySelector('#flow-update-cancel')?.addEventListener('click', () => close(null))
+			modal.querySelector('#flow-update-select-newer')?.addEventListener('click', () => {
+				modal.querySelectorAll('.flow-update-checkbox').forEach((checkbox) => {
+					const flowId = Number.parseInt(checkbox.dataset.flowId, 10)
+					checkbox.checked = entries.some(
+						(entry) => entry.flowId === flowId && entry.updateAvailable,
+					)
+				})
+			})
+			modal.querySelector('#flow-update-select-all')?.addEventListener('click', () => {
+				modal
+					.querySelectorAll('.flow-update-checkbox')
+					.forEach((checkbox) => (checkbox.checked = true))
+			})
+			modal.querySelector('#flow-update-apply')?.addEventListener('click', () => {
+				const selected = selectedEntries()
+				if (selected.length === 0) {
+					alert('Select at least one flow to redownload.')
+					return
+				}
+				close(selected)
+			})
+		})
+	}
+
+	async function checkFlowUpdates() {
+		const btn = document.getElementById('check-flow-updates-btn')
+		const originalText = btn?.textContent
+		if (btn) {
+			btn.disabled = true
+			btn.textContent = 'Checking...'
+		}
+
+		try {
+			const results = await invoke('check_flow_updates')
+			const sourced = Array.isArray(results) ? results : []
+			if (sourced.length === 0) {
+				alert('No URL-imported flows found.')
+				return
+			}
+
+			const selected = await showFlowUpdateSelectionModal(sourced)
+			if (!selected || selected.length === 0) return
+
+			for (const entry of selected) {
+				await invoke('redownload_flow', { flowId: entry.flowId })
+			}
+			await loadFlows()
+			alert(`Redownloaded ${selected.length} flow${selected.length === 1 ? '' : 's'}.`)
+		} catch (error) {
+			console.error('Failed to check flow updates:', error)
+			alert('Failed to check flow updates: ' + (error?.message || error))
+		} finally {
+			if (btn) {
+				btn.disabled = false
+				btn.textContent = originalText || 'Check Updates'
+			}
+		}
+	}
+
 	// Edit flow (placeholder for now)
 	async function editFlow(flowId) {
 		alert('Flow editor coming soon! For now, you can edit the flow.yaml file directly.')
@@ -5696,6 +5949,8 @@ steps:${
 			runFlow,
 			runFlowById: handleFlowRunClick,
 			openFlowFolder,
+			redownloadFlow,
+			checkFlowUpdates,
 			deleteFlow,
 			closeWizard,
 			wizardNext,
@@ -5772,6 +6027,10 @@ steps:${
 		const createBtn = document.getElementById('create-flow-btn')
 		if (createBtn) {
 			createBtn.addEventListener('click', showCreateFlowWizard)
+		}
+		const checkUpdatesBtn = document.getElementById('check-flow-updates-btn')
+		if (checkUpdatesBtn) {
+			checkUpdatesBtn.addEventListener('click', checkFlowUpdates)
 		}
 
 		const emptyCreateBtn = document.getElementById('empty-create-flow-btn')
