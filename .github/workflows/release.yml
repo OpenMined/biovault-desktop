@@ -21,7 +21,7 @@ on:
       build_macos_x64:
         description: "Build macOS (Intel)"
         required: false
-        default: false
+        default: true
         type: boolean
       build_windows_x64:
         description: "Build Windows (x86_64)"
@@ -31,12 +31,12 @@ on:
       build_linux_x64:
         description: "Build Linux (x86_64)"
         required: false
-        default: false
+        default: true
         type: boolean
       build_linux_arm64:
         description: "Build Linux (arm64, no bundled deps)"
         required: false
-        default: false
+        default: true
         type: boolean
   workflow_call:
     inputs:
@@ -54,7 +54,7 @@ on:
       build_macos_x64:
         required: false
         type: boolean
-        default: false
+        default: true
       build_windows_x64:
         required: false
         type: boolean
@@ -62,11 +62,11 @@ on:
       build_linux_x64:
         required: false
         type: boolean
-        default: false
+        default: true
       build_linux_arm64:
         required: false
         type: boolean
-        default: false
+        default: true
 
 concurrency:
   group: release-${{ github.ref_name }}
