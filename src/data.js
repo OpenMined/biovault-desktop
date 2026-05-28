@@ -33,6 +33,10 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	let datasets = []
 	let selectedFileIds = [] // File IDs selected for workflows/operations
 	let activeFileTypeFilters = new Set(FILE_TYPE_FILTER_KEYS)
+	let activeSourceFilters = null
+	let activeFacetValueFilters = new Map()
+	let isSourceFilterOpen = false
+	let openFacetFilterName = null
 	let fileSearchTerm = ''
 	let sortField = 'status'
 	let sortDirection = 'asc'
@@ -670,6 +674,45 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		return activeFileTypeFilters.has(getFileTypeCategory(file))
 	}
 
+	function getSourceValueForFilter(file) {
+		const rawValue =
+			file?.source ??
+			file?.data_source ??
+			file?.dataSource ??
+			file?.metadata?.source ??
+			file?.details?.source ??
+			''
+		return String(rawValue).trim()
+	}
+
+	function getSourceValueLabel(value) {
+		return value === '' ? '(blank)' : value
+	}
+
+	function matchesSourceFilter(file) {
+		if (!activeSourceFilters) return true
+		return activeSourceFilters.has(getSourceValueForFilter(file))
+	}
+
+	function getFacetValueForFilter(file, facetName) {
+		const rawValue = file?.facets?.[facetName]
+		const value = rawValue == null ? '' : String(rawValue)
+		return value
+	}
+
+	function getFacetValueLabel(value) {
+		return value === '' ? '(blank)' : value
+	}
+
+	function matchesFacetFilters(file) {
+		for (const [facetName, selectedValues] of activeFacetValueFilters.entries()) {
+			if (!selectedValues || selectedValues.size === 0) return false
+			const value = getFacetValueForFilter(file, facetName)
+			if (!selectedValues.has(value)) return false
+		}
+		return true
+	}
+
 	function normalizeDataType(value) {
 		return (value || '').toString().trim().toLowerCase()
 	}
@@ -748,6 +791,197 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				key === 'all' ? isAllFileTypeFiltersEnabled() : activeFileTypeFilters.has(key)
 			chip.classList.toggle('active', isActive)
 			chip.setAttribute('aria-pressed', isActive ? 'true' : 'false')
+		})
+	}
+
+	function getFacetFilterOptions(baseFiles) {
+		const optionsByFacet = new Map()
+		facetColumnNames.forEach((facetName) => {
+			const counts = new Map()
+			baseFiles.forEach((file) => {
+				const value = getFacetValueForFilter(file, facetName)
+				counts.set(value, (counts.get(value) || 0) + 1)
+			})
+			if (counts.size === 0) return
+			const options = Array.from(counts.entries()).sort(([a], [b]) =>
+				getFacetValueLabel(a).localeCompare(getFacetValueLabel(b), undefined, {
+					sensitivity: 'base',
+				}),
+			)
+			optionsByFacet.set(facetName, options)
+		})
+		return optionsByFacet
+	}
+
+	function pruneFacetFilters(optionsByFacet) {
+		for (const facetName of Array.from(activeFacetValueFilters.keys())) {
+			if (!optionsByFacet.has(facetName)) {
+				activeFacetValueFilters.delete(facetName)
+				continue
+			}
+			const validValues = new Set(optionsByFacet.get(facetName).map(([value]) => value))
+			const selected = activeFacetValueFilters.get(facetName)
+			const nextSelected = new Set(
+				Array.from(selected || []).filter((value) => validValues.has(value)),
+			)
+			if (nextSelected.size === validValues.size) {
+				activeFacetValueFilters.delete(facetName)
+			} else {
+				activeFacetValueFilters.set(facetName, nextSelected)
+			}
+		}
+	}
+
+	function getSelectedFacetValues(facetName, options) {
+		const explicitSelection = activeFacetValueFilters.get(facetName)
+		if (explicitSelection) return explicitSelection
+		return new Set(options.map(([value]) => value))
+	}
+
+	function renderFacetFilterDropdowns(baseFiles) {
+		const container = document.getElementById('facet-filter-dropdowns')
+		if (!container) return
+
+		const optionsByFacet = getFacetFilterOptions(baseFiles)
+		pruneFacetFilters(optionsByFacet)
+
+		if (optionsByFacet.size === 0) {
+			container.innerHTML = ''
+			container.style.display = 'none'
+			return
+		}
+
+		container.style.display = 'flex'
+		container.innerHTML = Array.from(optionsByFacet.entries())
+			.map(([facetName, options]) => {
+				const selectedValues = getSelectedFacetValues(facetName, options)
+				const selectedCount = options.filter(([value]) => selectedValues.has(value)).length
+				const allChecked = selectedCount === options.length
+				const summaryLabel = allChecked
+					? `${facetName}: All`
+					: `${facetName}: ${selectedCount}/${options.length}`
+				const optionItems = options
+					.map(([value, count]) => {
+						const inputId = `facet-filter-${facetName}-${value}`.replace(/[^a-zA-Z0-9_-]/g, '_')
+						return `
+							<label class="facet-filter-option" for="${escapeHtml(inputId)}">
+								<input
+									id="${escapeHtml(inputId)}"
+									type="checkbox"
+									class="facet-filter-checkbox"
+									data-facet-name="${escapeHtml(facetName)}"
+									data-facet-value="${escapeHtml(value)}"
+									${selectedValues.has(value) ? 'checked' : ''}
+								/>
+								<span class="facet-filter-option-label">${escapeHtml(getFacetValueLabel(value))}</span>
+								<span class="facet-filter-count">${count}</span>
+							</label>
+						`
+					})
+					.join('')
+				return `
+					<details class="facet-filter-dropdown" data-facet-name="${escapeHtml(facetName)}" ${openFacetFilterName === facetName ? 'open' : ''}>
+						<summary>${escapeHtml(summaryLabel)}</summary>
+						<div class="facet-filter-menu">
+							<div class="facet-filter-actions">
+								<button type="button" class="facet-filter-action" data-facet-action="all" data-facet-name="${escapeHtml(facetName)}">All</button>
+								<button type="button" class="facet-filter-action" data-facet-action="none" data-facet-name="${escapeHtml(facetName)}">None</button>
+							</div>
+							<div class="facet-filter-options">${optionItems}</div>
+						</div>
+					</details>
+				`
+			})
+			.join('')
+	}
+
+	function getSourceFilterOptions(baseFiles) {
+		const counts = new Map()
+		baseFiles.forEach((file) => {
+			const value = getSourceValueForFilter(file)
+			counts.set(value, (counts.get(value) || 0) + 1)
+		})
+		return Array.from(counts.entries()).sort(([a], [b]) =>
+			getSourceValueLabel(a).localeCompare(getSourceValueLabel(b), undefined, {
+				sensitivity: 'base',
+			}),
+		)
+	}
+
+	function pruneSourceFilter(options) {
+		if (!activeSourceFilters) return
+		const validValues = new Set(options.map(([value]) => value))
+		const selected = new Set(Array.from(activeSourceFilters).filter((value) => validValues.has(value)))
+		if (selected.size === validValues.size) {
+			activeSourceFilters = null
+		} else {
+			activeSourceFilters = selected
+		}
+	}
+
+	function getSelectedSourceValues(options) {
+		if (activeSourceFilters) return activeSourceFilters
+		return new Set(options.map(([value]) => value))
+	}
+
+	function renderSourceFilterDropdown(baseFiles) {
+		const container = document.getElementById('data-source-filter-dropdowns')
+		if (!container) return
+
+		const options = getSourceFilterOptions(baseFiles)
+		pruneSourceFilter(options)
+
+		if (options.length === 0) {
+			container.innerHTML = ''
+			container.style.display = 'none'
+			return
+		}
+
+		const selectedValues = getSelectedSourceValues(options)
+		const selectedCount = options.filter(([value]) => selectedValues.has(value)).length
+		const allChecked = selectedCount === options.length
+		const summaryLabel = allChecked
+			? 'Source: All'
+			: `Source: ${selectedCount}/${options.length}`
+		const optionItems = options
+			.map(([value, count]) => {
+				const inputId = `data-source-filter-${value}`.replace(/[^a-zA-Z0-9_-]/g, '_')
+				return `
+					<label class="facet-filter-option" for="${escapeHtml(inputId)}">
+						<input
+							id="${escapeHtml(inputId)}"
+							type="checkbox"
+							class="data-source-filter-checkbox"
+							data-source-value="${escapeHtml(value)}"
+							${selectedValues.has(value) ? 'checked' : ''}
+						/>
+						<span class="facet-filter-option-label">${escapeHtml(getSourceValueLabel(value))}</span>
+						<span class="facet-filter-count">${count}</span>
+					</label>
+				`
+			})
+			.join('')
+
+		container.style.display = 'flex'
+		container.innerHTML = `
+			<details class="facet-filter-dropdown data-source-filter-dropdown" ${isSourceFilterOpen ? 'open' : ''}>
+				<summary>${escapeHtml(summaryLabel)}</summary>
+				<div class="facet-filter-menu">
+					<div class="facet-filter-actions">
+						<button type="button" class="facet-filter-action" data-source-action="all">All</button>
+						<button type="button" class="facet-filter-action" data-source-action="none">None</button>
+					</div>
+					<div class="facet-filter-options">${optionItems}</div>
+				</div>
+			</details>
+		`
+	}
+
+	function closeFacetFilterDropdowns() {
+		isSourceFilterOpen = false
+		openFacetFilterName = null
+		document.querySelectorAll('.facet-filter-dropdown[open]').forEach((node) => {
+			node.removeAttribute('open')
 		})
 	}
 
@@ -1104,9 +1338,14 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 
 		const searchableFiles = getFilteredNonReferenceFiles().filter(matchesFileSearch)
 		updateFileTypeFilterUI(searchableFiles)
+		const typeFilteredFiles = searchableFiles.filter(matchesFileTypeFilter)
+		renderSourceFilterDropdown(typeFilteredFiles)
+		const sourceFilteredFiles = typeFilteredFiles.filter(matchesSourceFilter)
+		renderFacetFilterDropdowns(sourceFilteredFiles)
 
 		// Get files to display - apply all filters and store at module level
-		filesToDisplay = searchableFiles.filter(matchesFileTypeFilter)
+		filesToDisplay = sourceFilteredFiles.filter(matchesFacetFilters)
+		const visibleFileIds = new Set(filesToDisplay.map((file) => file.id))
 
 		// Update page title (keep it simple, file count is in badge)
 		const dataView = document.getElementById('data-view')
@@ -1116,8 +1355,12 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			pageTitle.textContent = 'Data'
 		}
 
-		// Clean up file selections (remove files that don't exist anymore)
-		selectedFileIds = selectedFileIds.filter((id) => allFiles.some((f) => f.id === id))
+		// Keep selection aligned with the visible filtered rows.
+		const previousSelectedFileIds = selectedFileIds
+		selectedFileIds = selectedFileIds.filter((id) => visibleFileIds.has(id))
+		if (selectedFileIds.length !== previousSelectedFileIds.length) {
+			syncSelectionToSessionStorage()
+		}
 
 		// Sort files
 		sortFiles(filesToDisplay)
@@ -3799,8 +4042,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 			(row) => row.participant_id.trim() && row.facet_name.trim(),
 		)
 		const diagnostics = getFacetPreviewDiagnostics()
-		const hasBlockingIssues =
-			diagnostics.unknownParticipants.length > 0 || diagnostics.duplicateKeys.length > 0
+		const hasBlockingIssues = diagnostics.duplicateKeys.length > 0
 
 		if (summary) {
 			const source = facetPreviewSourceFile
@@ -3831,7 +4073,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 					.join('')
 				const warnings = [
 					diagnostics.unknownParticipants.length
-						? `<div style="color: var(--error-color, #dc2626); margin-top: 8px;">Unknown participants: ${diagnostics.unknownParticipants.map(escapeHtml).join(', ')}</div>`
+						? `<div style="color: #b45309; margin-top: 8px;">Unknown participants will be skipped: ${diagnostics.unknownParticipants.map(escapeHtml).join(', ')}</div>`
 						: '',
 					diagnostics.duplicateKeys.length
 						? `<div style="color: var(--error-color, #dc2626); margin-top: 8px;">Duplicate participant/facet pairs: ${diagnostics.duplicateKeys.map(escapeHtml).join(', ')}</div>`
@@ -4305,6 +4547,152 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 				renderFilesPanel()
 			})
 		})
+
+		const facetFilterDropdowns = document.getElementById('facet-filter-dropdowns')
+		if (facetFilterDropdowns) {
+			document.addEventListener('click', (event) => {
+				if (
+					!event.target.closest('#facet-filter-dropdowns') &&
+					!event.target.closest('#data-source-filter-dropdowns')
+				) {
+					closeFacetFilterDropdowns()
+				}
+			})
+
+			facetFilterDropdowns.addEventListener('change', (event) => {
+				const checkbox = event.target.closest('.facet-filter-checkbox')
+				if (!checkbox) return
+				const facetName = checkbox.dataset.facetName || ''
+				const facetValue = checkbox.dataset.facetValue || ''
+				if (!facetName) return
+				openFacetFilterName = facetName
+
+				const typeFilteredFiles = getFilteredNonReferenceFiles()
+					.filter(matchesFileSearch)
+					.filter(matchesFileTypeFilter)
+				const sourceFilteredFiles = typeFilteredFiles.filter(matchesSourceFilter)
+				const options = getFacetFilterOptions(sourceFilteredFiles).get(facetName) || []
+				const selectedValues = new Set(getSelectedFacetValues(facetName, options))
+
+				if (checkbox.checked) {
+					selectedValues.add(facetValue)
+				} else {
+					selectedValues.delete(facetValue)
+				}
+
+				if (selectedValues.size === options.length) {
+					activeFacetValueFilters.delete(facetName)
+				} else {
+					activeFacetValueFilters.set(facetName, selectedValues)
+				}
+				renderFilesPanel()
+			})
+
+			facetFilterDropdowns.addEventListener('click', (event) => {
+				const summary = event.target.closest('.facet-filter-dropdown summary')
+				if (summary) {
+					const dropdown = summary.closest('.facet-filter-dropdown')
+					const facetName = dropdown?.dataset.facetName || null
+					setTimeout(() => {
+						if (dropdown?.open) {
+							openFacetFilterName = facetName
+							isSourceFilterOpen = false
+							document
+								.querySelectorAll('#data-source-filter-dropdowns .facet-filter-dropdown[open]')
+								.forEach((node) => node.removeAttribute('open'))
+							document
+								.querySelectorAll('#facet-filter-dropdowns .facet-filter-dropdown[open]')
+								.forEach((node) => {
+									if (node !== dropdown) node.removeAttribute('open')
+								})
+						} else if (openFacetFilterName === facetName) {
+							openFacetFilterName = null
+						}
+					}, 0)
+					return
+				}
+
+				const button = event.target.closest('.facet-filter-action')
+				if (!button) return
+				event.preventDefault()
+				const facetName = button.dataset.facetName || ''
+				const action = button.dataset.facetAction
+				if (!facetName) return
+				openFacetFilterName = facetName
+
+				const typeFilteredFiles = getFilteredNonReferenceFiles()
+					.filter(matchesFileSearch)
+					.filter(matchesFileTypeFilter)
+				const sourceFilteredFiles = typeFilteredFiles.filter(matchesSourceFilter)
+				const options = getFacetFilterOptions(sourceFilteredFiles).get(facetName) || []
+				if (action === 'all') {
+					activeFacetValueFilters.delete(facetName)
+				} else if (action === 'none') {
+					activeFacetValueFilters.set(facetName, new Set())
+				}
+				renderFilesPanel()
+			})
+		}
+
+		const dataSourceFilterDropdowns = document.getElementById('data-source-filter-dropdowns')
+		if (dataSourceFilterDropdowns) {
+			dataSourceFilterDropdowns.addEventListener('change', (event) => {
+				const checkbox = event.target.closest('.data-source-filter-checkbox')
+				if (!checkbox) return
+				const sourceValue = checkbox.dataset.sourceValue || ''
+				isSourceFilterOpen = true
+
+				const typeFilteredFiles = getFilteredNonReferenceFiles()
+					.filter(matchesFileSearch)
+					.filter(matchesFileTypeFilter)
+				const options = getSourceFilterOptions(typeFilteredFiles)
+				const selectedValues = new Set(getSelectedSourceValues(options))
+
+				if (checkbox.checked) {
+					selectedValues.add(sourceValue)
+				} else {
+					selectedValues.delete(sourceValue)
+				}
+
+				activeSourceFilters = selectedValues.size === options.length ? null : selectedValues
+				renderFilesPanel()
+			})
+
+			dataSourceFilterDropdowns.addEventListener('click', (event) => {
+				const summary = event.target.closest('.data-source-filter-dropdown summary')
+				if (summary) {
+					const dropdown = summary.closest('.data-source-filter-dropdown')
+					setTimeout(() => {
+						if (dropdown?.open) {
+							isSourceFilterOpen = true
+							openFacetFilterName = null
+							document
+								.querySelectorAll('#facet-filter-dropdowns .facet-filter-dropdown[open]')
+								.forEach((node) => node.removeAttribute('open'))
+						} else {
+							isSourceFilterOpen = false
+						}
+					}, 0)
+					return
+				}
+
+				const button = event.target.closest('.facet-filter-action[data-source-action]')
+				if (!button) return
+				event.preventDefault()
+				isSourceFilterOpen = true
+
+				const typeFilteredFiles = getFilteredNonReferenceFiles()
+					.filter(matchesFileSearch)
+					.filter(matchesFileTypeFilter)
+				const options = getSourceFilterOptions(typeFilteredFiles)
+				if (button.dataset.sourceAction === 'all') {
+					activeSourceFilters = null
+				} else if (button.dataset.sourceAction === 'none') {
+					activeSourceFilters = new Set()
+				}
+				renderFilesPanel()
+			})
+		}
 
 		// Sortable headers
 		document.querySelectorAll('.sortable-header').forEach((header) => {

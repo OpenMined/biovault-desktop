@@ -232,13 +232,15 @@ pub fn import_participant_facets(
             continue;
         }
 
-        let participant_row_id: i64 = tx
-            .query_row(
-                "SELECT id FROM participants WHERE participant_id = ?1",
-                params![participant],
-                |db_row| db_row.get(0),
-            )
-            .map_err(|_| format!("Unknown participant_id: {}", participant))?;
+        let participant_row_id: i64 = match tx.query_row(
+            "SELECT id FROM participants WHERE participant_id = ?1",
+            params![participant],
+            |db_row| db_row.get(0),
+        ) {
+            Ok(id) => id,
+            Err(rusqlite::Error::QueryReturnedNoRows) => continue,
+            Err(e) => return Err(format!("Failed to look up participant {}: {}", participant, e)),
+        };
 
         tx.execute(
             "INSERT INTO participant_facets
