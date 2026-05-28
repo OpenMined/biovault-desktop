@@ -1749,6 +1749,7 @@ pub fn run() {
             resume_flow_run,
             cleanup_flow_run_state,
             path_exists,
+            resolve_path_matches,
             delete_flow_run,
             preview_flow_spec,
             import_flow_from_message,

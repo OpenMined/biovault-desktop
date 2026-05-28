@@ -452,6 +452,7 @@ fn get_commands_list() -> serde_json::Value {
         cmd("cleanup_flow_run_state", "flows", true),
         cmd("get_flow_run_work_dir", "flows", true),
         cmd("path_exists", "flows", true),
+        cmd("resolve_path_matches", "flows", true),
         cmd("start_analysis", "runs", false),
         cmd_async("execute_analysis", "runs", false),
         // Sessions
@@ -1343,6 +1344,17 @@ async fn execute_command(app: &AppHandle, cmd: &str, args: Value) -> Result<Valu
             )
             .map_err(|e| format!("Failed to parse path: {}", e))?;
             let result = crate::commands::flows::path_exists(path).map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+        "resolve_path_matches" => {
+            let path: String = serde_json::from_value(
+                args.get("path")
+                    .cloned()
+                    .ok_or_else(|| "Missing path".to_string())?,
+            )
+            .map_err(|e| format!("Failed to parse path: {}", e))?;
+            let result =
+                crate::commands::flows::resolve_path_matches(path).map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(result).unwrap())
         }
         "get_flow_run_logs" => {

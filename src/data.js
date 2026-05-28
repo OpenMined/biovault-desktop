@@ -911,7 +911,9 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 	function pruneSourceFilter(options) {
 		if (!activeSourceFilters) return
 		const validValues = new Set(options.map(([value]) => value))
-		const selected = new Set(Array.from(activeSourceFilters).filter((value) => validValues.has(value)))
+		const selected = new Set(
+			Array.from(activeSourceFilters).filter((value) => validValues.has(value)),
+		)
 		if (selected.size === validValues.size) {
 			activeSourceFilters = null
 		} else {
@@ -940,9 +942,7 @@ export function createDataModule({ invoke, dialog, getCurrentUserEmail }) {
 		const selectedValues = getSelectedSourceValues(options)
 		const selectedCount = options.filter(([value]) => selectedValues.has(value)).length
 		const allChecked = selectedCount === options.length
-		const summaryLabel = allChecked
-			? 'Source: All'
-			: `Source: ${selectedCount}/${options.length}`
+		const summaryLabel = allChecked ? 'Source: All' : `Source: ${selectedCount}/${options.length}`
 		const optionItems = options
 			.map(([value, count]) => {
 				const inputId = `data-source-filter-${value}`.replace(/[^a-zA-Z0-9_-]/g, '_')
