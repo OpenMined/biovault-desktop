@@ -1345,6 +1345,10 @@
 	min-height: 0;
 }
 
+.files-panel:has(.facet-filter-dropdown[open]) {
+	overflow: visible;
+}
+
 .files-panel-header {
 	display: flex;
 	align-items: center;
@@ -1381,12 +1385,15 @@
 }
 
 .files-type-filter-bar {
+	position: relative;
+	z-index: 60;
 	display: flex;
 	align-items: center;
 	gap: 12px;
 	padding: 12px 14px 8px;
 	border-bottom: 1px solid #edf2f7;
 	background: linear-gradient(to bottom, #ffffff 0%, #fbfdff 100%);
+	overflow: visible;
 }
 
 .files-type-filter-label {
@@ -1403,6 +1410,112 @@
 	align-items: center;
 	gap: 8px;
 	flex-wrap: wrap;
+}
+
+.facet-filter-dropdowns,
+.data-source-filter-dropdowns {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+	min-width: 0;
+}
+
+.facet-filter-dropdown {
+	position: relative;
+}
+
+.facet-filter-dropdown summary {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 32px;
+	padding: 6px 10px;
+	border: 1px solid #dbe3ee;
+	border-radius: 8px;
+	background: #ffffff;
+	color: #334155;
+	font-size: 12px;
+	font-weight: 600;
+	cursor: pointer;
+	list-style: none;
+	font-family: inherit;
+}
+
+.facet-filter-dropdown summary::-webkit-details-marker {
+	display: none;
+}
+
+.facet-filter-dropdown summary::after {
+	content: '';
+	width: 7px;
+	height: 7px;
+	border-right: 1.5px solid currentColor;
+	border-bottom: 1.5px solid currentColor;
+	transform: rotate(45deg) translateY(-2px);
+	opacity: 0.7;
+}
+
+.facet-filter-menu {
+	position: absolute;
+	top: calc(100% + 6px);
+	left: 0;
+	z-index: 80;
+	width: 240px;
+	max-height: 320px;
+	overflow: auto;
+	padding: 8px;
+	border: 1px solid #dbe3ee;
+	border-radius: 8px;
+	background: #ffffff;
+	box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
+}
+
+.facet-filter-actions {
+	display: flex;
+	gap: 6px;
+	padding-bottom: 8px;
+	margin-bottom: 4px;
+	border-bottom: 1px solid #edf2f7;
+}
+
+.facet-filter-action {
+	padding: 4px 8px;
+	border: 1px solid #dbe3ee;
+	border-radius: 6px;
+	background: #f8fafc;
+	color: #475569;
+	font-size: 11px;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.facet-filter-option {
+	display: grid;
+	grid-template-columns: 18px minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 8px;
+	padding: 6px;
+	border-radius: 6px;
+	color: #334155;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.facet-filter-option:hover {
+	background: #f8fafc;
+}
+
+.facet-filter-option-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.facet-filter-count {
+	color: #64748b;
+	font-size: 11px;
+	font-weight: 700;
 }
 
 .file-type-filter-chip {

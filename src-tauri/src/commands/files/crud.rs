@@ -1,5 +1,6 @@
 use crate::commands::files::facets::facets_for_participant_ids;
 use crate::types::{AppState, FileRecord};
+use std::collections::HashMap;
 
 #[tauri::command]
 pub fn get_files(state: tauri::State<AppState>) -> Result<Vec<FileRecord>, String> {
@@ -15,18 +16,30 @@ pub fn get_files(state: tauri::State<AppState>) -> Result<Vec<FileRecord>, Strin
         .collect();
     let facets_by_participant =
         facets_for_participant_ids(&db, &participant_ids).unwrap_or_default();
+    let metadata_sources = sources_for_file_ids(
+        &db,
+        &cli_files.iter().map(|file| file.id).collect::<Vec<_>>(),
+    )
+    .unwrap_or_default();
 
     // Convert CLI FileRecords to desktop FileRecords
     let files: Vec<FileRecord> = cli_files
         .into_iter()
         .map(|f| {
+            let file_id = f.id;
+            let source = f
+                .source
+                .as_ref()
+                .filter(|source| !source.trim().is_empty())
+                .cloned()
+                .or_else(|| metadata_sources.get(&file_id).cloned());
             let facets = f
                 .participant_id
                 .as_ref()
                 .and_then(|pid| facets_by_participant.get(pid).cloned())
                 .unwrap_or_default();
             FileRecord {
-                id: f.id,
+                id: file_id,
                 participant_id: f.participant_id,
                 participant_name: f.participant_name,
                 file_path: f.file_path,
@@ -34,7 +47,7 @@ pub fn get_files(state: tauri::State<AppState>) -> Result<Vec<FileRecord>, Strin
                 file_type: f.file_type,
                 file_size: f.file_size,
                 data_type: f.data_type,
-                source: f.source,
+                source,
                 grch_version: f.grch_version,
                 row_count: f.row_count,
                 chromosome_count: f.chromosome_count,
@@ -50,6 +63,41 @@ pub fn get_files(state: tauri::State<AppState>) -> Result<Vec<FileRecord>, Strin
 
     crate::desktop_log!("✅ Returning {} files", files.len());
     Ok(files)
+}
+
+fn sources_for_file_ids(
+    db: &biovault::data::BioVaultDb,
+    file_ids: &[i64],
+) -> Result<HashMap<i64, String>, String> {
+    if file_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let mut sources = HashMap::new();
+    let mut stmt = db
+        .conn
+        .prepare(
+            "SELECT f.id,
+                    COALESCE(g.source, v.source, a.source, r.source, d.source) AS source
+             FROM files f
+             LEFT JOIN genotype_metadata g ON g.file_id = f.id
+             LEFT JOIN variant_metadata v ON v.file_id = f.id
+             LEFT JOIN aligned_metadata a ON a.file_id = f.id
+             LEFT JOIN reference_metadata r ON r.file_id = f.id
+             LEFT JOIN database_metadata d ON d.file_id = f.id
+             WHERE COALESCE(g.source, v.source, a.source, r.source, d.source) IS NOT NULL
+               AND TRIM(COALESCE(g.source, v.source, a.source, r.source, d.source)) != ''",
+        )
+        .map_err(|e| format!("Failed to prepare source lookup: {}", e))?;
+
+    let rows = stmt
+        .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))
+        .map_err(|e| format!("Failed to read source lookup: {}", e))?;
+    for row in rows {
+        let (file_id, source) = row.map_err(|e| format!("Failed to collect sources: {}", e))?;
+        sources.insert(file_id, source);
+    }
+    Ok(sources)
 }
 
 #[tauri::command]
