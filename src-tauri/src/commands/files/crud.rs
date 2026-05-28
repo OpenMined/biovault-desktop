@@ -91,7 +91,9 @@ fn sources_for_file_ids(
         .map_err(|e| format!("Failed to prepare source lookup: {}", e))?;
 
     let rows = stmt
-        .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })
         .map_err(|e| format!("Failed to read source lookup: {}", e))?;
     for row in rows {
         let (file_id, source) = row.map_err(|e| format!("Failed to collect sources: {}", e))?;

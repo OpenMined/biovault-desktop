@@ -135,6 +135,74 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			.replace(/\n/g, '\\n')
 	}
 
+	function pathBaseName(path) {
+		return String(path || '')
+			.split(/[\\/]/)
+			.filter(Boolean)
+			.pop()
+	}
+
+	function publishedOutputFileName(name, spec) {
+		return String(spec || '').match(/\(([^)]+)\)/)?.[1] || name
+	}
+
+	async function collectPublishedOutputs(steps, resultsDir, { includeMissing = true } = {}) {
+		if (!resultsDir) return []
+		const outputs = []
+		const seenPaths = new Set()
+
+		for (const step of steps || []) {
+			if (!step.publish || Object.keys(step.publish).length === 0) continue
+			for (const [name, spec] of Object.entries(step.publish)) {
+				const declaredName = publishedOutputFileName(name, spec)
+				const outputPath = `${resultsDir}/${step.id}/${declaredName}`
+				let matches = []
+				try {
+					matches = await invoke('resolve_path_matches', { path: outputPath })
+				} catch (error) {
+					console.warn('Failed to resolve published output path:', outputPath, error)
+					const exists = await invoke('path_exists', { path: outputPath }).catch(() => false)
+					matches = exists ? [outputPath] : []
+				}
+
+				if (matches.length > 0) {
+					matches.forEach((matchPath) => {
+						if (seenPaths.has(matchPath)) return
+						seenPaths.add(matchPath)
+						const fileName = pathBaseName(matchPath) || declaredName
+						const extension = fileName.includes('.')
+							? fileName.substring(fileName.lastIndexOf('.'))
+							: ''
+						outputs.push({
+							name,
+							fileName,
+							declaredName,
+							extension,
+							path: matchPath,
+							stepId: step.id,
+							exists: true,
+						})
+					})
+				} else if (includeMissing) {
+					const extension = declaredName.includes('.')
+						? declaredName.substring(declaredName.lastIndexOf('.'))
+						: ''
+					outputs.push({
+						name,
+						fileName: declaredName,
+						declaredName,
+						extension,
+						path: outputPath,
+						stepId: step.id,
+						exists: false,
+					})
+				}
+			}
+		}
+
+		return outputs
+	}
+
 	function getStepTimerKey(sessionId, stepId) {
 		return `${sessionId}::${stepId}`
 	}
@@ -650,12 +718,13 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		try {
 			const logs = await invoke('get_flow_run_logs_tail', { runId: run.id, lines: 800 })
 			const filteredLogs = filterNextflowTaskLogs(logs)
+			const displayLogs = filteredLogs || stripAnsi(logs).trim()
 			const cacheKey = flowLogCache.get(run.id)
-			if (cacheKey !== filteredLogs) {
-				flowLogCache.set(run.id, filteredLogs)
+			if (cacheKey !== displayLogs) {
+				flowLogCache.set(run.id, displayLogs)
 				const wasAtBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 24
-				if (filteredLogs) {
-					logEl.textContent = filteredLogs
+				if (displayLogs) {
+					logEl.textContent = displayLogs
 					if (wasAtBottom) {
 						logEl.scrollTop = logEl.scrollHeight
 					}
@@ -3429,7 +3498,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			const logsExpanded = run.status === 'running'
 			const logsHtml = `
 				<div class="run-log-section" style="margin-bottom: 24px;">
-					<button class="run-log-toggle" data-run-id="${run.id}" style="width: 100%; display: flex; align-items: center; gap: 10px; padding: 14px 16px; background: #f8fafc; border: 1.5px solid #e2e8f0; border-radius: 10px; cursor: pointer; transition: all 0.2s; text-align: left; font-size: 14px; font-weight: 600; color: #475569;" onmouseover="this.style.background='#f1f5f9'; this.style.borderColor='#cbd5e1'" onmouseout="this.style.background='#f8fafc'; this.style.borderColor='#e2e8f0'">
+					<div class="run-log-toggle" role="button" tabindex="0" data-run-id="${run.id}" style="width: 100%; display: flex; align-items: center; gap: 10px; padding: 14px 16px; background: #f8fafc; border: 1.5px solid #e2e8f0; border-radius: 10px; cursor: pointer; transition: all 0.2s; text-align: left; font-size: 14px; font-weight: 600; color: #475569;" onmouseover="this.style.background='#f1f5f9'; this.style.borderColor='#cbd5e1'" onmouseout="this.style.background='#f8fafc'; this.style.borderColor='#e2e8f0'">
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="transition: transform 0.3s; color: #94a3b8; transform: ${logsExpanded ? 'rotate(90deg)' : 'rotate(0deg)'};">
 							<polyline points="9 18 15 12 9 6"></polyline>
 						</svg>
@@ -3440,37 +3509,25 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 								: ''
 						}
 						<span style="margin-left: auto; font-size: 12px; color: #94a3b8;">Nextflow output</span>
-					</button>
+						<button type="button" class="run-log-copy-btn" data-run-id="${run.id}" title="Copy logs" style="display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid #cbd5e1; border-radius: 7px; background: #ffffff; color: #475569; font-size: 12px; font-weight: 700; cursor: pointer;">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+								<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+								<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+							</svg>
+							<span>Copy</span>
+						</button>
+					</div>
 					<div class="run-log-content" style="display: ${logsExpanded ? 'block' : 'none'}; padding: 16px; background: #ffffff; border: 1.5px solid #e2e8f0; border-top: none; border-radius: 0 0 10px 10px;">
 						<pre class="run-log-stream" data-run-id="${run.id}" style="max-height: 260px; overflow: auto; background: #f8fafc; color: #1f2937; border-radius: 8px; padding: 12px; font-size: 12px; line-height: 1.5; font-family: 'SF Mono', Monaco, monospace; border: 1px solid #e2e8f0;">Loading logs...</pre>
 					</div>
 				</div>
 			`
 
-			// Collect all published outputs from all steps - make them prominent
-			// Only show published outputs if the run has completed successfully
-			const allPublishedOutputs = []
-			if (run.status === 'success') {
-				steps.forEach((step) => {
-					if (step.publish && Object.keys(step.publish).length > 0) {
-						Object.entries(step.publish).forEach(([name, spec]) => {
-							const fileName = spec.match(/\(([^)]+)\)/)?.[1] || name
-							const outputPath = `${resultsDir}/${step.id}/${fileName}`
-							// Extract file extension
-							const extension = fileName.includes('.')
-								? fileName.substring(fileName.lastIndexOf('.'))
-								: ''
-							allPublishedOutputs.push({
-								name,
-								fileName,
-								extension,
-								path: outputPath,
-								stepId: step.id,
-							})
-						})
-					}
-				})
-			}
+			// Collect declared published outputs, expanding glob patterns to real files.
+			const allPublishedOutputs =
+				run.status === 'success' ? await collectPublishedOutputs(steps, resultsDir) : []
+			const existingOutputCount = allPublishedOutputs.filter((output) => output.exists).length
+			const missingOutputCount = allPublishedOutputs.length - existingOutputCount
 
 			// Collapsible inputs section (collapsed by default)
 			const configRowHtml = (label, value) => `
@@ -3565,9 +3622,13 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 									<line x1="12" y1="3" x2="12" y2="15"></line>
 								</svg>
 								<h3 style="margin: 0; font-size: 18px; font-weight: 700; color: #0f172a; letter-spacing: -0.01em;">Published Outputs</h3>
-								<span style="padding: 4px 10px; background: #d1fae5; color: #047857; border-radius: 6px; font-size: 12px; font-weight: 700; margin-left: auto;">${
+								<span style="padding: 4px 10px; background: ${
+									missingOutputCount > 0 ? '#fee2e2' : '#d1fae5'
+								}; color: ${
+									missingOutputCount > 0 ? '#b91c1c' : '#047857'
+								}; border-radius: 6px; font-size: 12px; font-weight: 700; margin-left: auto;">${existingOutputCount}/${
 									allPublishedOutputs.length
-								} file${allPublishedOutputs.length === 1 ? '' : 's'}</span>
+								} file${allPublishedOutputs.length === 1 ? '' : 's'} present</span>
 							</div>
 							<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px;">
 								${allPublishedOutputs
@@ -3575,22 +3636,56 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 										(output) => `
 									<button class="published-output-card" data-output-path="${
 										output.path
-									}" style="padding: 18px 20px; background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border: 2.5px solid #10b981; border-radius: 12px; cursor: pointer; transition: all 0.2s; text-align: left; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 4px 12px rgba(16,185,129,0.2); position: relative;" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 20px rgba(16,185,129,0.35)'; this.style.borderColor='#059669'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 12px rgba(16,185,129,0.2)'; this.style.borderColor='#10b981'">
+									}" data-output-exists="${output.exists ? 'true' : 'false'}" ${
+										output.exists ? '' : 'disabled'
+									} style="padding: 18px 20px; background: ${
+										output.exists
+											? 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)'
+											: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)'
+									}; border: 2.5px solid ${
+										output.exists ? '#10b981' : '#cbd5e1'
+									}; border-radius: 12px; cursor: ${
+										output.exists ? 'pointer' : 'not-allowed'
+									}; transition: all 0.2s; text-align: left; display: flex; flex-direction: column; gap: 10px; box-shadow: ${
+										output.exists ? '0 4px 12px rgba(16,185,129,0.2)' : 'none'
+									}; position: relative; opacity: ${output.exists ? '1' : '0.78'};" ${
+										output.exists
+											? `onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 20px rgba(16,185,129,0.35)'; this.style.borderColor='#059669'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 12px rgba(16,185,129,0.2)'; this.style.borderColor='#10b981'"`
+											: ''
+									}>
 										<div style="display: flex; align-items: center; gap: 12px;">
-											<div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); display: flex; align-items: center; justify-content: center; flex-shrink: 0; box-shadow: 0 2px 8px rgba(16,185,129,0.3); overflow: hidden;">
-												<img src="assets/icons/upload.svg" width="22" height="22" style="filter: brightness(0) invert(1);" />
+											<div style="width: 40px; height: 40px; border-radius: 10px; background: ${
+												output.exists
+													? 'linear-gradient(135deg, #10b981 0%, #059669 100%)'
+													: '#e2e8f0'
+											}; display: flex; align-items: center; justify-content: center; flex-shrink: 0; box-shadow: ${
+												output.exists ? '0 2px 8px rgba(16,185,129,0.3)' : 'none'
+											}; overflow: hidden;">
+												<img src="assets/icons/${
+													output.exists ? 'upload.svg' : 'alert-circle.svg'
+												}" width="22" height="22" style="filter: ${
+													output.exists ? 'brightness(0) invert(1)' : 'none'
+												}; opacity: ${output.exists ? '1' : '0.55'};" />
 											</div>
 											<div style="flex: 1; min-width: 0;">
-												<span style="font-size: 15px; font-weight: 700; color: #065f46; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.3; display: block;">${escapeHtml(
+												<span style="font-size: 15px; font-weight: 700; color: ${
+													output.exists ? '#065f46' : '#475569'
+												}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.3; display: block;">${escapeHtml(
 													output.fileName,
 												)}</span>
-												<div style="font-size: 11px; color: #047857; font-family: 'SF Mono', Monaco, monospace; margin-top: 4px; opacity: 0.8;">${escapeHtml(
+												<div style="font-size: 11px; color: ${
+													output.exists ? '#047857' : '#94a3b8'
+												}; font-family: 'SF Mono', Monaco, monospace; margin-top: 4px; opacity: 0.9;">${escapeHtml(
 													output.stepId,
-												)}</div>
+												)}${output.exists ? '' : ' · missing'}</div>
 											</div>
-											<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: #059669; flex-shrink: 0; opacity: 0.7;">
-												<polyline points="9 18 15 12 9 6"></polyline>
-											</svg>
+											${
+												output.exists
+													? `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: #059669; flex-shrink: 0; opacity: 0.7;">
+														<polyline points="9 18 15 12 9 6"></polyline>
+													</svg>`
+													: `<span style="padding: 3px 7px; background: #fee2e2; color: #b91c1c; border-radius: 999px; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em;">Missing</span>`
+											}
 										</div>
 									</button>
 								`,
@@ -3819,11 +3914,45 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					const isOpen = logContent.style.display !== 'none'
 					setExpanded(!isOpen)
 				})
+				logToggle.addEventListener('keydown', (event) => {
+					if (event.key !== 'Enter' && event.key !== ' ') return
+					event.preventDefault()
+					const isOpen = logContent.style.display !== 'none'
+					setExpanded(!isOpen)
+				})
 				if (logsExpanded) {
 					setExpanded(true)
 				} else if (run.status === 'running') {
 					startFlowLogPolling(run, logStream, progressEls, stepRows)
 				}
+			}
+
+			const logCopyBtn = container.querySelector(`.run-log-copy-btn[data-run-id="${run.id}"]`)
+			if (logCopyBtn) {
+				logCopyBtn.addEventListener('click', async (event) => {
+					event.preventDefault()
+					event.stopPropagation()
+					const original = logCopyBtn.innerHTML
+					try {
+						let text = ''
+						try {
+							text = await invoke('get_flow_run_logs_full', { runId: run.id })
+						} catch (error) {
+							console.warn('Failed to read full flow log, falling back to visible logs:', error)
+						}
+						if (!text || text.startsWith('No logs available')) {
+							text = logStream?.textContent || ''
+						}
+						if (!text || text === 'Loading logs...') return
+						await navigator.clipboard.writeText(text)
+						logCopyBtn.innerHTML = '<span style="color: #16a34a;">Copied</span>'
+						setTimeout(() => {
+							logCopyBtn.innerHTML = original
+						}, 1500)
+					} catch (error) {
+						console.error('Failed to copy flow logs:', error)
+					}
+				})
 			}
 
 			// Load saved state for completed/failed/paused runs (progress, concurrency, nf command)
@@ -3833,12 +3962,11 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 					: null
 				loadAndDisplaySavedState(run.id, progressEls, concurrencyInput, run.status).then(
 					(savedState) => {
-						// Also refresh logs once for failed/paused to show what happened
-						if (logStream && (run.status === 'failed' || run.status === 'paused')) {
-							refreshFlowRunLogs(run, logStream, progressEls, stepRows)
-						}
-						// For success runs, also try to extract nf command from logs if not in state
-						if (logStream && run.status === 'success' && !savedState?.nextflow_command) {
+						// Always refresh once for terminal runs so collapsed/expanded details read flow.log.
+						if (
+							logStream &&
+							(run.status === 'failed' || run.status === 'paused' || run.status === 'success')
+						) {
 							refreshFlowRunLogs(run, logStream, progressEls, stepRows)
 						}
 					},
@@ -3849,6 +3977,7 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 			const publishedOutputCards = container.querySelectorAll('.published-output-card')
 			publishedOutputCards.forEach((card) => {
 				card.addEventListener('click', async () => {
+					if (card.dataset.outputExists !== 'true') return
 					try {
 						const outputPath = card.dataset.outputPath
 						await invoke('open_folder', { path: outputPath })
@@ -4034,25 +4163,13 @@ export function createRunsModule({ invoke, listen, dialog, refreshLogs = () => {
 		const steps = flow && flow.spec && flow.spec.steps ? flow.spec.steps : []
 		const resultsDir = run.results_dir || run.work_dir
 
-		// Collect all published outputs
-		const publishedOutputs = []
-		steps.forEach((step) => {
-			if (step.publish && Object.keys(step.publish).length > 0) {
-				Object.entries(step.publish).forEach(([name, spec]) => {
-					const fileName = spec.match(/\(([^)]+)\)/)?.[1] || name
-					const outputPath = `${resultsDir}/${step.id}/${fileName}`
-					publishedOutputs.push({
-						name,
-						fileName,
-						path: outputPath,
-						stepId: step.id,
-					})
-				})
-			}
+		// Collect all published outputs, expanding glob patterns to real files.
+		const publishedOutputs = await collectPublishedOutputs(steps, resultsDir, {
+			includeMissing: false,
 		})
 
 		if (publishedOutputs.length === 0) {
-			alert('This run has no published outputs to share.')
+			alert('This run has no available published outputs to share.')
 			return
 		}
 

@@ -442,6 +442,100 @@ fn copy_local_flow_dir(src: &Path, dest: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn remove_existing_path(path: &Path, label: &str) -> Result<(), String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => {
+            return Err(format!(
+                "Failed to inspect {} {}: {}",
+                label,
+                path.display(),
+                e
+            ))
+        }
+    };
+
+    let file_type = metadata.file_type();
+    if file_type.is_dir() && !file_type.is_symlink() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    }
+    .map_err(|e| {
+        format!(
+            "Failed to remove existing {} {}: {}",
+            label,
+            path.display(),
+            e
+        )
+    })
+}
+
+fn path_exists_or_symlink(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok()
+}
+
+fn path_has_wildcard(path: &str) -> bool {
+    path.contains('*') || path.contains('?')
+}
+
+fn wildcard_match(pattern: &str, value: &str) -> bool {
+    let pattern_chars: Vec<char> = pattern.chars().collect();
+    let value_chars: Vec<char> = value.chars().collect();
+    let mut pattern_idx = 0;
+    let mut value_idx = 0;
+    let mut star_idx: Option<usize> = None;
+    let mut star_value_idx = 0;
+
+    while value_idx < value_chars.len() {
+        if pattern_idx < pattern_chars.len()
+            && (pattern_chars[pattern_idx] == '?'
+                || pattern_chars[pattern_idx] == value_chars[value_idx])
+        {
+            pattern_idx += 1;
+            value_idx += 1;
+        } else if pattern_idx < pattern_chars.len() && pattern_chars[pattern_idx] == '*' {
+            star_idx = Some(pattern_idx);
+            pattern_idx += 1;
+            star_value_idx = value_idx;
+        } else if let Some(star) = star_idx {
+            pattern_idx = star + 1;
+            star_value_idx += 1;
+            value_idx = star_value_idx;
+        } else {
+            return false;
+        }
+    }
+
+    while pattern_idx < pattern_chars.len() && pattern_chars[pattern_idx] == '*' {
+        pattern_idx += 1;
+    }
+
+    pattern_idx == pattern_chars.len()
+}
+
+fn normalized_path_string(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn wildcard_search_root(path: &Path) -> PathBuf {
+    let mut root = PathBuf::new();
+    for component in path.components() {
+        let component_text = component.as_os_str().to_string_lossy();
+        if path_has_wildcard(&component_text) {
+            break;
+        }
+        root.push(component.as_os_str());
+    }
+
+    if root.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        root
+    }
+}
+
 fn list_nextflow_locks(flow_path: &Path) -> Vec<PathBuf> {
     let nextflow_dir = flow_path.join(".nextflow");
     if !nextflow_dir.exists() {
@@ -1609,10 +1703,9 @@ pub async fn create_flow(
         // Create flow directory in managed location
         let managed_flow_dir = flows_dir.join(&name);
 
-        if managed_flow_dir.exists() {
+        if path_exists_or_symlink(&managed_flow_dir) {
             if overwrite {
-                fs::remove_dir_all(&managed_flow_dir)
-                    .map_err(|e| format!("Failed to remove existing flow directory: {}", e))?;
+                remove_existing_path(&managed_flow_dir, "flow directory")?;
             } else {
                 return Err(format!(
                     "Flow '{}' already exists at {}. Use overwrite to replace.",
@@ -1649,15 +1742,9 @@ pub async fn create_flow(
                 let module_dir_name = entry.file_name().to_string_lossy().to_string();
                 let dest_module_dir = modules_dir.join(&module_dir_name);
 
-                if dest_module_dir.exists() {
+                if path_exists_or_symlink(&dest_module_dir) {
                     if overwrite {
-                        fs::remove_dir_all(&dest_module_dir).map_err(|e| {
-                            format!(
-                                "Failed to remove existing module directory {}: {}",
-                                dest_module_dir.display(),
-                                e
-                            )
-                        })?;
+                        remove_existing_path(&dest_module_dir, "module directory")?;
                     } else {
                         continue;
                     }
@@ -1897,9 +1984,8 @@ pub async fn import_flow_from_json(
             .map_err(|e| e.to_string())?;
     }
 
-    if flow_dir.exists() && overwrite {
-        fs::remove_dir_all(&flow_dir)
-            .map_err(|e| format!("Failed to remove existing flow directory: {}", e))?;
+    if overwrite {
+        remove_existing_path(&flow_dir, "flow directory")?;
     }
 
     fs::create_dir_all(&flow_dir).map_err(|e| format!("Failed to create flow directory: {}", e))?;
@@ -2068,9 +2154,8 @@ pub async fn delete_flow(state: tauri::State<'_, AppState>, flow_id: i64) -> Res
         let path_buf = PathBuf::from(p.flow_path);
 
         // Only delete if the path is within the flows directory
-        if path_buf.starts_with(&flows_dir) && path_buf.exists() {
-            fs::remove_dir_all(&path_buf)
-                .map_err(|e| format!("Failed to delete flow directory: {}", e))?;
+        if path_buf.starts_with(&flows_dir) && path_exists_or_symlink(&path_buf) {
+            remove_existing_path(&path_buf, "flow directory")?;
         }
     }
 
@@ -3873,7 +3958,47 @@ pub fn get_flow_run_logs_full(
 
 #[tauri::command]
 pub fn path_exists(path: String) -> Result<bool, String> {
+    if path_has_wildcard(&path) {
+        return Ok(!resolve_path_matches(path)?.is_empty());
+    }
     Ok(Path::new(&path).exists())
+}
+
+#[tauri::command]
+pub fn resolve_path_matches(path: String) -> Result<Vec<String>, String> {
+    if !path_has_wildcard(&path) {
+        let path_buf = PathBuf::from(&path);
+        return Ok(if path_buf.exists() {
+            vec![path]
+        } else {
+            Vec::new()
+        });
+    }
+
+    let pattern_path = PathBuf::from(&path);
+    let search_root = wildcard_search_root(&pattern_path);
+    if !search_root.exists() {
+        return Ok(Vec::new());
+    }
+
+    let normalized_pattern = path.replace('\\', "/");
+    let mut matches = Vec::new();
+    for entry in WalkDir::new(&search_root)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let candidate = normalized_path_string(entry.path());
+        if wildcard_match(&normalized_pattern, &candidate) {
+            matches.push(entry.path().to_string_lossy().to_string());
+        }
+    }
+    matches.sort();
+    matches.dedup();
+    Ok(matches)
 }
 
 #[tauri::command]
@@ -3999,11 +4124,10 @@ pub async fn import_flow_from_message(
     let flow_dir = flows_dir.join(&name);
 
     // Check if flow already exists
-    if flow_dir.exists() {
+    if path_exists_or_symlink(&flow_dir) {
         // For now, we'll overwrite - in the future could prompt user
         // or rename with version suffix
-        fs::remove_dir_all(&flow_dir)
-            .map_err(|e| format!("Failed to remove existing flow: {}", e))?;
+        remove_existing_path(&flow_dir, "flow directory")?;
     }
 
     // Create flow directory
@@ -4170,10 +4294,9 @@ pub async fn import_flow_from_request(
             .map_err(|e| e.to_string())?;
     }
 
-    if dest_dir.exists() {
+    if path_exists_or_symlink(&dest_dir) {
         if overwrite {
-            fs::remove_dir_all(&dest_dir)
-                .map_err(|e| format!("Failed to remove existing flow: {}", e))?;
+            remove_existing_path(&dest_dir, "flow directory")?;
         } else {
             return Err(format!(
                 "Flow '{}' already exists at {}. Use overwrite to replace.",
@@ -4203,15 +4326,9 @@ pub async fn import_flow_from_request(
             let module_dir_name = entry.file_name().to_string_lossy().to_string();
             let dest_module_dir = modules_dir.join(&module_dir_name);
 
-            if dest_module_dir.exists() {
+            if path_exists_or_symlink(&dest_module_dir) {
                 if overwrite {
-                    fs::remove_dir_all(&dest_module_dir).map_err(|e| {
-                        format!(
-                            "Failed to remove existing module directory {}: {}",
-                            dest_module_dir.display(),
-                            e
-                        )
-                    })?;
+                    remove_existing_path(&dest_module_dir, "module directory")?;
                 } else {
                     continue;
                 }

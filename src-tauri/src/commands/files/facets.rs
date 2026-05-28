@@ -239,7 +239,12 @@ pub fn import_participant_facets(
         ) {
             Ok(id) => id,
             Err(rusqlite::Error::QueryReturnedNoRows) => continue,
-            Err(e) => return Err(format!("Failed to look up participant {}: {}", participant, e)),
+            Err(e) => {
+                return Err(format!(
+                    "Failed to look up participant {}: {}",
+                    participant, e
+                ))
+            }
         };
 
         tx.execute(
