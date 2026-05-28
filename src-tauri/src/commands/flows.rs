@@ -35,6 +35,137 @@ pub struct FlowCreateRequest {
     pub overwrite: bool,
 }
 
+const FLOW_SOURCE_METADATA_FILE: &str = ".biovault-flow-source.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowSourceMetadata {
+    pub source_url: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowListItem {
+    #[serde(flatten)]
+    pub flow: Flow,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowUpdateInfo {
+    pub flow_id: i64,
+    pub name: String,
+    pub source_url: String,
+    pub current_version: Option<String>,
+    pub remote_version: Option<String>,
+    pub update_available: bool,
+    pub error: Option<String>,
+}
+
+fn normalize_flow_url(url: &str) -> String {
+    let mut raw_url = url
+        .replace("github.com", "raw.githubusercontent.com")
+        .replace("/blob/", "/")
+        .replace("/tree/", "/");
+    if !raw_url.ends_with(".yaml") && !raw_url.ends_with(".yml") && !raw_url.ends_with(".json") {
+        raw_url = format!("{}/flow.yaml", raw_url.trim_end_matches('/'));
+    }
+    raw_url
+}
+
+pub fn write_flow_source_metadata(flow_path: &str, source_url: &str) -> Result<(), String> {
+    let path = PathBuf::from(flow_path).join(FLOW_SOURCE_METADATA_FILE);
+    let metadata = FlowSourceMetadata {
+        source_url: normalize_flow_url(source_url),
+    };
+    let json = serde_json::to_string_pretty(&metadata)
+        .map_err(|e| format!("Failed to serialize flow source metadata: {}", e))?;
+    fs::write(&path, json).map_err(|e| format!("Failed to write flow source metadata: {}", e))
+}
+
+fn read_flow_source_metadata(flow_path: &str) -> Option<FlowSourceMetadata> {
+    let path = PathBuf::from(flow_path).join(FLOW_SOURCE_METADATA_FILE);
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<FlowSourceMetadata>(&raw).ok())
+}
+
+fn known_managed_flow_source_url(name: &str) -> Option<&'static str> {
+    match name {
+        "01_bv_paper_pca_qc_fast" => Some(
+            "https://raw.githubusercontent.com/madhavajay/BioVault_popgen/main/flows/01_bv_paper_pca_qc_fast/flow.yaml",
+        ),
+        "02_bv_paper_gnomad_projection_fast" => Some(
+            "https://raw.githubusercontent.com/madhavajay/BioVault_popgen/main/flows/02_bv_paper_gnomad_projection_fast/flow.yaml",
+        ),
+        "03_bv_paper_sex_biased_admixture_fast" => Some(
+            "https://raw.githubusercontent.com/madhavajay/BioVault_popgen/main/flows/03_bv_paper_sex_biased_admixture_fast/flow.yaml",
+        ),
+        "04_bv_paper_population_level" => Some(
+            "https://raw.githubusercontent.com/madhavajay/BioVault_popgen/main/flows/04_bv_paper_population_level/flow.yaml",
+        ),
+        _ => None,
+    }
+}
+
+fn is_managed_flow_path(flow_path: &str) -> bool {
+    let Ok(home) = biovault::config::get_biovault_home() else {
+        return false;
+    };
+    PathBuf::from(flow_path).starts_with(home.join("flows"))
+}
+
+fn flow_source_metadata_for(flow: &Flow) -> Option<FlowSourceMetadata> {
+    read_flow_source_metadata(&flow.flow_path).or_else(|| {
+        if is_managed_flow_path(&flow.flow_path) {
+            known_managed_flow_source_url(&flow.name).map(|source_url| FlowSourceMetadata {
+                source_url: source_url.to_string(),
+            })
+        } else {
+            None
+        }
+    })
+}
+
+fn read_flow_file(flow_path: &str) -> Option<FlowFile> {
+    let path = PathBuf::from(flow_path).join(FLOW_YAML_FILE);
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| FlowFile::parse_yaml(&raw).ok())
+}
+
+fn flow_list_item(flow: Flow) -> FlowListItem {
+    let version = read_flow_file(&flow.flow_path).map(|file| file.metadata.version);
+    let source_url = flow_source_metadata_for(&flow).map(|metadata| metadata.source_url);
+    FlowListItem {
+        flow,
+        version,
+        source_url,
+    }
+}
+
+fn parse_flow_version(value: &str) -> Result<semver::Version, String> {
+    let normalized = value.trim().trim_start_matches('v');
+    semver::Version::parse(normalized)
+        .map_err(|e| format!("Invalid semantic version '{}': {}", value, e))
+}
+
+fn remote_version_is_newer(
+    current_version: Option<&str>,
+    remote_version: &str,
+) -> Result<bool, String> {
+    let remote = parse_flow_version(remote_version)?;
+    let Some(current_version) = current_version else {
+        return Ok(true);
+    };
+    let current = parse_flow_version(current_version)?;
+    Ok(remote > current)
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FlowRunSelection {
@@ -1622,11 +1753,102 @@ fn append_flow_log(window: Option<&tauri::WebviewWindow>, log_path: &Path, messa
 }
 
 #[tauri::command]
-pub async fn get_flows(state: tauri::State<'_, AppState>) -> Result<Vec<Flow>, String> {
+pub async fn get_flows(state: tauri::State<'_, AppState>) -> Result<Vec<FlowListItem>, String> {
     let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
     let flows = biovault_db.list_flows().map_err(|e| e.to_string())?;
 
-    Ok(flows)
+    Ok(flows.into_iter().map(flow_list_item).collect())
+}
+
+#[tauri::command]
+pub async fn check_flow_updates(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<FlowUpdateInfo>, String> {
+    let flows = {
+        let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+        biovault_db.list_flows().map_err(|e| e.to_string())?
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut updates = Vec::new();
+        for flow in flows {
+            let Some(source) = flow_source_metadata_for(&flow) else {
+                continue;
+            };
+
+            let current_version = read_flow_file(&flow.flow_path).map(|file| file.metadata.version);
+            let mut info = FlowUpdateInfo {
+                flow_id: flow.id,
+                name: flow.name,
+                source_url: source.source_url.clone(),
+                current_version,
+                remote_version: None,
+                update_available: false,
+                error: None,
+            };
+
+            match reqwest::blocking::get(&source.source_url) {
+                Ok(response) if response.status().is_success() => match response.text() {
+                    Ok(raw) => match FlowFile::parse_yaml(&raw) {
+                        Ok(remote) => {
+                            let remote_version = remote.metadata.version;
+                            match remote_version_is_newer(
+                                info.current_version.as_deref(),
+                                &remote_version,
+                            ) {
+                                Ok(is_newer) => {
+                                    info.update_available = is_newer;
+                                }
+                                Err(e) => {
+                                    info.error = Some(e);
+                                }
+                            }
+                            info.remote_version = Some(remote_version);
+                        }
+                        Err(e) => {
+                            info.error = Some(format!("Failed to parse remote flow.yaml: {}", e));
+                        }
+                    },
+                    Err(e) => {
+                        info.error = Some(format!("Failed to read remote flow.yaml: {}", e));
+                    }
+                },
+                Ok(response) => {
+                    info.error = Some(format!("HTTP {}", response.status()));
+                }
+                Err(e) => {
+                    info.error = Some(format!("Failed to fetch remote flow.yaml: {}", e));
+                }
+            }
+
+            updates.push(info);
+        }
+        Ok::<_, String>(updates)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn redownload_flow(
+    state: tauri::State<'_, AppState>,
+    flow_id: i64,
+) -> Result<String, String> {
+    let flow = {
+        let biovault_db = state.biovault_db.lock().map_err(|e| e.to_string())?;
+        biovault_db
+            .get_flow(flow_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Flow {} not found", flow_id))?
+    };
+    let source = flow_source_metadata_for(&flow)
+        .ok_or_else(|| "This flow was not imported from a URL".to_string())?;
+    let source_url = source.source_url.clone();
+
+    let flow_path =
+        crate::commands::modules::import_flow_with_deps(source_url.clone(), None, true).await?;
+    write_flow_source_metadata(&flow_path, &source_url)?;
+    Ok(flow_path)
 }
 
 #[tauri::command]

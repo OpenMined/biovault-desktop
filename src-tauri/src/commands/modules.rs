@@ -339,8 +339,10 @@ pub async fn import_flow_with_deps(
     name_override: Option<String>,
     overwrite: bool,
 ) -> Result<String, String> {
+    let source_url = url.clone();
+    let should_record_source = !source_url.starts_with('/') && !source_url.starts_with("file://");
     // Spawn blocking to avoid Send issues with BioVaultDb
-    tauri::async_runtime::spawn_blocking(move || {
+    let flow_path = tauri::async_runtime::spawn_blocking(move || {
         tauri::async_runtime::block_on(async {
             biovault::cli::commands::module_management::import_flow_with_deps(
                 &url,
@@ -352,7 +354,13 @@ pub async fn import_flow_with_deps(
         })
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+
+    if should_record_source {
+        crate::commands::flows::write_flow_source_metadata(&flow_path, &source_url)?;
+    }
+
+    Ok(flow_path)
 }
 
 #[tauri::command]

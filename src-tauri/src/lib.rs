@@ -1723,6 +1723,8 @@ pub fn run() {
             delete_run,
             // Flow commands
             get_flows,
+            check_flow_updates,
+            redownload_flow,
             get_runs_base_dir,
             create_flow,
             import_flow_from_json,
